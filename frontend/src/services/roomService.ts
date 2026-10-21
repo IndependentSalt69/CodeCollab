@@ -6,6 +6,7 @@ import {
   Room,
   InviteResponse,
 } from '../types/room';
+import { ChatHistoryResponse } from '../types/chat';
 
 import { API_BASE_URL } from './apiConfig';
 
@@ -174,6 +175,34 @@ export async function rotateRoomInvite(
       };
     }
     const msg = err instanceof Error ? err.message : 'Failed to rotate invite code';
+    return { ok: false, error: msg };
+  }
+}
+
+export async function getRoomMessages(
+  roomId: string,
+  token?: string | null,
+  before?: string | null
+): Promise<ChatHistoryResponse> {
+  try {
+    const response = await axios.get<ChatHistoryResponse>(
+      `${API_BASE_URL}/api/rooms/${encodeURIComponent(roomId)}/messages`,
+      {
+        headers: getAuthHeaders(token),
+        params: before ? { before } : undefined,
+        timeout: 10000,
+      }
+    );
+    return response.data;
+  } catch (err: unknown) {
+    if (axios.isAxiosError(err)) {
+      const axiosErr = err as AxiosError<{ ok: boolean; error?: string }>;
+      return {
+        ok: false,
+        error: axiosErr.response?.data?.error || axiosErr.message || 'Failed to load chat history',
+      };
+    }
+    const msg = err instanceof Error ? err.message : 'Failed to load chat history';
     return { ok: false, error: msg };
   }
 }

@@ -8,6 +8,7 @@ import {
 } from '../../realtime/client/events';
 import CodeEditor from './components/editor/CodeEditor';
 import Terminal from './components/terminal/Terminal';
+import ChatPanel from './components/chat/ChatPanel';
 import { applyTerminalEvent, terminalRequest, TerminalEvent, TerminalRequestError } from './services/interactiveTerminal';
 import { ExecutionResult, ExecutionStatus } from './types/execution';
 import { Room } from './types/room';
@@ -779,7 +780,15 @@ export default function App() {
         />
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.25rem' }}>
+        <ChatPanel
+          socket={socketStatus === 'connected' ? socketRef.current : null}
+          roomId={roomId}
+          token={authToken}
+          currentUserId={authUser?.id}
+          isJoined={roomStatus.startsWith('joined')}
+        />
+
         {/* Active Users Section */}
         <div style={{ background: '#ffffff', padding: '1.25rem', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
           <h3 style={{ marginTop: 0, marginBottom: '1rem', borderBottom: '1px solid #f1f5f9', paddingBottom: '0.5rem', fontSize: '1.05rem' }}>
