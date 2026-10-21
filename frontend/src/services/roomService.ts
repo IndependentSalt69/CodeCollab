@@ -7,6 +7,7 @@ import {
   InviteResponse,
 } from '../types/room';
 import { ChatHistoryResponse } from '../types/chat';
+import { VoiceTokenResponse } from '../types/voice';
 
 import { API_BASE_URL } from './apiConfig';
 
@@ -203,6 +204,33 @@ export async function getRoomMessages(
       };
     }
     const msg = err instanceof Error ? err.message : 'Failed to load chat history';
+    return { ok: false, error: msg };
+  }
+}
+
+export async function getVoiceToken(
+  roomId: string,
+  token?: string | null
+): Promise<VoiceTokenResponse> {
+  try {
+    const response = await axios.post<VoiceTokenResponse>(
+      `${API_BASE_URL}/api/rooms/${encodeURIComponent(roomId)}/voice-token`,
+      {},
+      {
+        headers: getAuthHeaders(token),
+        timeout: 10000,
+      }
+    );
+    return response.data;
+  } catch (err: unknown) {
+    if (axios.isAxiosError(err)) {
+      const axiosErr = err as AxiosError<{ ok: boolean; error?: string }>;
+      return {
+        ok: false,
+        error: axiosErr.response?.data?.error || axiosErr.message || 'Failed to join voice',
+      };
+    }
+    const msg = err instanceof Error ? err.message : 'Failed to join voice';
     return { ok: false, error: msg };
   }
 }
