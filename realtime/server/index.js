@@ -5,14 +5,18 @@ const registerPresenceHandlers = require('./presence');
 const registerChatHandlers = require('./chat');
 const registerTypingHandlers = require('./typing');
 const driverState = require('./driverState');
+const { InteractiveSessions } = require('../../backend/src/services/interactiveSessions');
 
 const jwt = require('jsonwebtoken');
 const { getJwtSecret } = require('../../backend/src/middleware/auth');
 
 function initRealtimeServer(httpServer, corsOptions) {
   const io = new Server(httpServer, {
+    maxHttpBufferSize: 160 * 1024,
     cors: corsOptions || { origin: '*' },
   });
+  const terminal = new InteractiveSessions(io);
+  httpServer.on('close', () => { void terminal.close(); });
 
   // Verify handshake JWT token if provided
   io.use((socket, next) => {
@@ -40,6 +44,7 @@ function initRealtimeServer(httpServer, corsOptions) {
   });
 
   io.on('connection', (socket) => {
+    terminal.register(socket);
     registerRoomHandlers(io, socket);
     registerEditorHandlers(io, socket);
     registerPresenceHandlers(io, socket);

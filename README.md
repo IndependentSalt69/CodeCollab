@@ -80,6 +80,10 @@ Infrastructure tests cover actual loopback binds, synthetic excluded-port result
 
 ## Execution and production security
 
+**Run Code opens a live program I/O session.** Wait for a prompt, enter a response in **Program input**, and press Enter. Repeat for further prompts without restarting the program. **Send EOF / Close Input** closes stdin while preserving trailing output; **Stop** terminates the sandbox; **Clear** only clears displayed output. Optional initial input is separate and does not close stdin. Only the initiating client, while still the room's driver, can control the run. Authorized room members can watch output.
+
+Python 3.11, C++ (GCC 13) and Java 17 are the only executable languages. The total deadline is **10 seconds**, including compilation and time spent waiting for input; typing does not extend it. Input is limited to 64 KiB UTF-8 per run and output to 64 KiB per stream. This is program stdin/stdout, without a PTY, shell, terminal control sequences or job control. See [the interactive protocol and recovery notes](docs/INTERACTIVE_TERMINAL.md).
+
 Supported sources are Python, C++17 and Java 17 (`public class Main`, default package). Compilation and execution share the timeout. The executor bounds source/output, uses argument arrays, removes containers, and enforces a read-only root filesystem, non-root user, dropped capabilities, no-new-privileges and no network. C++ alone gets an executable scratch mount for its compiled binary. Java compilation disables annotation processors and bounds the JVM.
 
 The local rootless DinD profile retains its outer 1 CPU / 512 MiB / 128-PID limits. `init: true` reaps orphaned daemon helpers. Existing deployments require an explicit drained maintenance recreation to adopt it; never raise limits or restart a shared daemon automatically. Diagnostics reports PID/memory controller events and zombie/helper counts. Working local execution does not prove per-runner kernel enforcement.

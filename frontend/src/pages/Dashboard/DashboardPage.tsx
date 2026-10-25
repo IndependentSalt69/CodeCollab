@@ -352,7 +352,6 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onSelectRoom }) =>
                   }}
                 >
                   <option value="python">Python 3.11 (⚡ Container Sandbox)</option>
-                  <option value="javascript">JavaScript (Preview)</option>
                   <option value="java">Java (Preview)</option>
                   <option value="cpp">C++ (Preview)</option>
                 </select>

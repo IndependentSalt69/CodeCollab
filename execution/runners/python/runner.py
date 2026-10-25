@@ -74,8 +74,12 @@ def execute_submission(submission_path):
             stdin=sys.stdin,
             stdout=sys.stdout,
             stderr=sys.stderr,
+            timeout=min(10000, max(1, int(os.environ["CODECOLLAB_TIMEOUT_MS"]))) / 1000 if os.environ.get("CODECOLLAB_TIMEOUT_MS") else None,
         )
         return result.returncode
+    except subprocess.TimeoutExpired:
+        print("Execution deadline exceeded", file=sys.stderr, flush=True)
+        return 124
     except Exception as exc:
         sys.stderr.write(f"Runner execution error: {exc}\n")
         sys.stderr.flush()

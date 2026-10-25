@@ -36,6 +36,7 @@ let isShuttingDown = false;
  * @returns {Promise<Object>} Execution result object
  */
 async function processJob(job) {
+  if (job.data?.sessionId) return require('./interactive')(job);
   const { language, code, stdin, timeout, memory, roomId, userId } = job.data || {};
   const startTime = Date.now();
 

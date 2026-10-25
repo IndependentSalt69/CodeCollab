@@ -45,6 +45,7 @@ module.exports = async function executeCode(runSpec) {
     language,
     code,
     stdin,
+    io: runSpec.io,
     timeout,
     memory,
     cpu: sandboxConfig.cpu,

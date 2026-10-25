@@ -112,11 +112,11 @@ describe('Driver state management lifecycle', () => {
     const updateReceivedByB = nextEvent(userB, 'editor:update');
     userA.emit('editor:change', {
       roomId,
-      code: 'console.log("hello")',
-      language: 'javascript',
+      code: 'print("hello")',
+      language: 'python',
     });
     const codeUpdate = await updateReceivedByB;
-    expect(codeUpdate.code).toBe('console.log("hello")');
+    expect(codeUpdate.code).toBe('print("hello")');
     expect(codeUpdate.updatedBy).toBe(userA.id);
 
     // Verify Viewer B cannot broadcast edits
@@ -125,7 +125,7 @@ describe('Driver state management lifecycle', () => {
     userB.emit('editor:change', {
       roomId,
       code: 'unauthorized edit',
-      language: 'javascript',
+      language: 'python',
     });
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(unexpectedUpdate).not.toHaveBeenCalled();

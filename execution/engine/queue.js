@@ -248,6 +248,7 @@ class ExecutionQueue {
       roomId: roomId || null,
       userId: userId || null,
       enqueuedAt: Date.now(),
+      ...(jobSpec.sessionId ? { sessionId: jobSpec.sessionId } : {}),
     };
 
     return await queue.add('executeCode', payload, opts);

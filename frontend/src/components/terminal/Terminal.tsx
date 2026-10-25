@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ExecutionResult, ExecutionStatus } from '../../types/execution';
 
 export interface TerminalProps {
@@ -7,6 +7,10 @@ export interface TerminalProps {
   onClear?: () => void;
   className?: string;
   height?: string | number;
+  canControl?: boolean;
+  onInput?: (text: string) => Promise<void>;
+  onEOF?: () => Promise<void>;
+  onStop?: () => Promise<void>;
 }
 
 const statusBadgeConfig: Record<
@@ -27,6 +31,8 @@ const statusBadgeConfig: Record<
     border: '#3b82f640',
     icon: '⏳',
   },
+  starting: { label: 'Starting...', bg: '#3b82f620', color: '#60a5fa', border: '#3b82f640', icon: '⏳' },
+  cancelled: { label: 'Cancelled', bg: '#334155', color: '#cbd5e1', border: '#475569', icon: '■' },
   running: {
     label: 'Running...',
     bg: '#eab30820',
@@ -63,12 +69,22 @@ export const Terminal: React.FC<TerminalProps> = ({
   onClear,
   className,
   height = '280px',
+  canControl = false, onInput, onEOF, onStop,
 }) => {
-  const currentStatus: ExecutionStatus = isRunning
-    ? result?.status === 'queued'
-      ? 'queued'
-      : 'running'
-    : result?.status || 'idle';
+  const [line, setLine] = useState('');
+  const [pending, setPending] = useState(false);
+  const [inputError, setInputError] = useState('');
+  const bodyRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { setLine(''); setInputError(''); }, [result?.sessionId]);
+  useEffect(() => { if (bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight; }, [result?.stdout, result?.stderr]);
+  const currentStatus: ExecutionStatus = result?.status || (isRunning ? 'running' : 'idle');
+  const inputOpen = canControl && currentStatus === 'running' && !result?.inputClosed && !pending;
+  const act = async (action: (() => Promise<void>) | undefined) => {
+    if (!action || pending) return;
+    setPending(true); setInputError('');
+    try { await action(); } catch (error) { setInputError(error instanceof Error ? error.message : 'Terminal action failed'); }
+    finally { setPending(false); }
+  };
 
   const badge = statusBadgeConfig[currentStatus] || statusBadgeConfig.idle;
   const hasStdout = Boolean(result?.stdout && result.stdout.trim().length > 0);
@@ -131,6 +147,10 @@ export const Terminal: React.FC<TerminalProps> = ({
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          {result?.sessionId && <>
+            <button onClick={() => void act(onEOF)} disabled={!inputOpen}>Send EOF / Close Input</button>
+            <button onClick={() => void act(onStop)} disabled={!canControl || !isRunning || pending}>Stop</button>
+          </>}
           {/* Metadata: Execution Time */}
           {result?.executionTimeMs !== undefined && result.executionTimeMs !== null && (
             <span style={{ fontSize: '11px', color: '#94a3b8' }}>
@@ -182,6 +202,9 @@ export const Terminal: React.FC<TerminalProps> = ({
 
       {/* Terminal Body */}
       <div
+        ref={bodyRef}
+        role="log"
+        aria-label="Program output"
         style={{
           flex: 1,
           padding: '12px 16px',
@@ -227,7 +250,11 @@ export const Terminal: React.FC<TerminalProps> = ({
         )}
 
         {/* Standard Output */}
-        {hasStdout && (
+        {result?.segments && <pre style={{ margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'inherit' }}>
+          {result.segments.map((segment, index) => <span key={index} data-stream={segment.channel}
+            style={{ color: segment.channel === 'stderr' ? '#f87171' : '#f1f5f9' }}>{segment.text}</span>)}
+        </pre>}
+        {!result?.segments && hasStdout && (
           <pre
             style={{
               margin: 0,
@@ -242,7 +269,7 @@ export const Terminal: React.FC<TerminalProps> = ({
         )}
 
         {/* Standard Error / Runtime Exception */}
-        {hasStderr && (
+        {!result?.segments && hasStderr && (
           <pre
             style={{
               margin: hasStdout ? '8px 0 0 0' : 0,
@@ -271,6 +298,15 @@ export const Terminal: React.FC<TerminalProps> = ({
           </div>
         )}
       </div>
+      {result?.sessionId && <form onSubmit={event => { event.preventDefault(); if (inputOpen) void act(async () => { await onInput?.(line + '\n'); setLine(''); }); }}
+        style={{ padding: '8px 14px', borderTop: '1px solid #334155' }}>
+        <label htmlFor="terminal-input">Program input</label>{' '}
+        <input id="terminal-input" autoComplete="off" value={line} onChange={event => setLine(event.target.value)}
+          disabled={!inputOpen} maxLength={4095} placeholder={result.inputClosed ? 'Input closed' : currentStatus === 'running' ? 'Type a response, then Enter' : 'Input available when running'} />
+        <button type="submit" disabled={!inputOpen}>Send</button>
+        <div style={{ fontSize: '11px', color: '#94a3b8' }}>Live program input only. The total execution deadline still applies while waiting.</div>
+        {inputError && <div role="alert" style={{ color: '#f87171' }}>{inputError}</div>}
+      </form>}
     </div>
   );
 };
