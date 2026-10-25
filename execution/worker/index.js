@@ -36,13 +36,14 @@ let isShuttingDown = false;
  * @returns {Promise<Object>} Execution result object
  */
 async function processJob(job) {
-  const { language, code, timeout, memory, roomId, userId } = job.data || {};
+  const { language, code, stdin, timeout, memory, roomId, userId } = job.data || {};
   const startTime = Date.now();
 
   try {
     const result = await executeCode({
       language,
       code,
+      stdin,
       timeout,
       memory,
     });
