@@ -1,133 +1,24 @@
-# CodeCollab — Collaborative Online Coding Platform
+# CodeCollab
 
-A full-stack web application that lets multiple users create shared coding rooms, communicate via real-time chat, and compile/execute code together in Python, Java, and C++ — all from the browser, with no third-party compiler APIs.
+CodeCollab provides authenticated coding rooms, a shared driver-controlled editor, chat, and Python, C++ and Java execution through a separate queue worker and Docker daemon.
 
-CodeCollab combines the functionality of an online compiler with a real-time messaging system into a single integrated platform, giving developers, students, and interviewers a live space to code, test, and collaborate together.
+**Release status: trusted prototype development only.** Local execution is tested, but the Docker Desktop/nested-daemon profile is not production-qualified. See [the current completion report](docs/CODEX_COMPLETION_REPORT.md) for measured results, remaining blockers and recovery steps. Older milestone documents are historical records.
 
----
+## Windows setup
 
-## Problem Statement
+Install Docker Desktop with Linux containers, PowerShell 5.1 or newer, and Node.js/npm for host-side tests. From the repository root:
 
-Developers often need to collaborate on code in real time — for pair programming, technical interviews, teaching, or debugging together — but existing solutions either rely on third-party platforms, lack live communication, or don't support secure server-side code execution. CodeCollab builds this experience from the ground up.
-
----
-
-## Features
-
-- **User Authentication & Authorization** — secure signup/login with JWT-based sessions
-- **Coding Rooms** — create a room and invite others via a shareable link
-- **Live Code Editor** — shared view with real-time updates broadcast to all room members
-- **Multi-Language Execution** — run Python, Java, and C++ code in isolated Docker containers
-- **Live Terminal / Output Panel** — see compiled output, errors, and runtime info instantly
-- **Integrated Real-Time Chat** — text messaging with typing indicators and live delivery per room
-- **Execution History** — past code runs saved and viewable per room and per user
-- **Sandboxed Execution** — CPU/memory/time-limited Docker containers, fully isolated from the host
-- **Cloud Deployment** — hosted on AWS/Azure/Heroku
-
-> **Scope note:** This version supports one active "driver" per room at a time — the room owner or current driver writes/runs code while others watch live updates and chat alongside. Full simultaneous multi-cursor editing (CRDT/OT) is intentionally out of scope for this build.
-
----
-
-## Tech Stack
-
-**Frontend**
-- React 18 + TypeScript
-- Monaco Editor (code editor component)
-- Socket.io-client (real-time communication)
-
-**Backend**
-- Node.js + Express
-- Socket.io (WebSocket server)
-- dockerode (Docker orchestration from Node)
-- BullMQ + Redis (execution job queue)
-
-**Execution Engine**
-- Docker containers — one per language runtime (Python, Java, C++)
-- Resource-limited, network-isolated sandboxes per run
-
-**Database**
-- MongoDB (users, rooms, chat history, execution history)
-
-**Deployment**
-- Docker Compose (local orchestration)
-- AWS EC2 / Azure / Heroku (cloud hosting)
-
----
-
-## Project Structure
-
-```
-CodeCollab/
-│
-├── frontend/                       # React + TypeScript frontend
-│   ├── src/
-│   │   ├── components/             # editor, chat, terminal, room
-│   │   ├── pages/                  # Login, Signup, Dashboard, Room, History
-│   │   ├── hooks/
-│   │   ├── context/
-│   │   ├── services/
-│   │   ├── types/
-│   │   └── App.tsx
-│   └── package.json
-│
-├── backend/                        # Node.js + Express backend API
-│   ├── src/
-│   │   ├── routes/
-│   │   ├── controllers/
-│   │   ├── middleware/
-│   │   ├── services/
-│   │   ├── config/
-│   │   └── index.js
-│   └── package.json
-│
-├── database/                       # Database models and seed scripts
-│   ├── models/                     # User, Room, Message, ExecutionRun
-│   ├── seeds/
-│   └── README.md
-│
-├── realtime/                       # Real-time WebSocket layer
-│   ├── server/                     # Socket handlers (rooms, editorSync, presence, chat, typing)
-│   ├── client/                     # Socket client instance & event constants
-│   └── protocol/                   # Socket event specification
-│
-├── execution/                      # Code execution engine & sandboxes
-│   ├── engine/                     # executeCode, executor, queue, resultParser, sandboxConfig
-│   ├── runners/                    # Dockerfiles & runners for python, java, cpp
-│   └── README.md
-│
-├── infrastructure/                 # Deployment & orchestration
-│   ├── docker/
-│   ├── docker-compose.yml
-│   ├── .env.example
-│   └── deployment/
-│
-├── testing/                        # Test suites
-│   ├── backend/
-│   ├── realtime/
-│   ├── execution/
-│   ├── frontend/
-│   └── security/
-│
-├── docs/                           # Architecture, API & security documentation
-│   ├── architecture.md
-│   ├── api-spec.md
-│   ├── socket-events.md
-│   └── security-notes.md
-│
-├── demo/                           # Demo walkthrough and seed data
-│   ├── seed_users.js
-│   ├── seed_rooms.js
-│   └── demo_script.md
-│
-├── eval/                           # Security & load evaluation notes
-│   ├── sandbox_escape_tests.md
-│   └── load_test_notes.md
-│
-├── README.md
-└── CURRENT_STATUS.md
+```powershell
+.\setup.ps1
+.\start.ps1
+.\verify.ps1
+# Additional disposable runner executions:
+.\verify.ps1 -ExecutionSmoke
+# Read-only diagnostics with targeted next steps:
+.\diagnose.ps1
 ```
 
-## Getting Started
+Setup creates `infrastructure/.env` only when absent, using random secrets. Existing configuration is validated and preserved. Missing, empty, duplicate, malformed or placeholder settings fail with key names rather than secret values. JWT secrets must contain at least 32 characters. Generated hex passwords work in the MongoDB/Redis connection URLs. Do not replace existing database credentials without rotating the corresponding database users.
 
 ### Prerequisites
 - Windows PowerShell
@@ -157,45 +48,34 @@ This Docker Desktop configuration is for trusted local development. It warns tha
 Do not expose this development stack to the public internet. On another device, `localhost` refers to that device, not the CodeCollab laptop. LAN access may require configuring the frontend API and realtime URLs, along with the backend's allowed client origin. Keep the execution daemon API (ports 2375/2376), MongoDB, and Redis private; do not expose them to the LAN.
 ## Running Tests
 
-```bash
-# Run all standard automated test suites (21 passing suites, 278 passing tests, 3 skipped)
+## Tests
+
+Install workspace dependencies with `npm ci` from the root. Use a disposable Redis and explicit `REDIS_URL`; several suites clear their test queues. Never point tests at shared application Redis or a real database. The completion report records the isolated services used for this run.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File testing/infrastructure/dev_workflow.tests.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File testing/infrastructure/startup_failures.tests.ps1
 npm test
-
-# Run opt-in live MongoDB integration tests against local disposable instance (1 suite, 3 tests)
-npm run test:integration:mongo
-
-# Run frontend production build check
+npm run test:execution
 npm run build
+# Only with MONGO_TEST_URI pointing at a disposable local MongoDB:
+npm run test:integration:mongo
 ```
 
----
+Infrastructure tests cover actual loopback binds, synthetic excluded-port results, bounded exhaustion, environment preservation, Compose interpolation, startup failure ordering and archive cleanup. Jest combines unit/mocked checks with live Docker/Redis suites. The MongoDB suite is opt-in and uses a disposable database. `testing/infrastructure/application.smoke.js` is a separate live authenticated test guarded to use the exact disposable fixture containers described in the report.
 
-## Security Notes
+## Execution and production security
 
-Each code submission runs in a fresh, isolated Docker container with:
-- No network access (`--network none`)
-- CPU and memory limits
-- Execution timeout enforcement
-- No access to the host filesystem beyond a temporary code file
+Supported sources are Python, C++17 and Java 17 (`public class Main`, default package). Compilation and execution share the timeout. The executor bounds source/output, uses argument arrays, removes containers, and enforces a read-only root filesystem, non-root user, dropped capabilities, no-new-privileges and no network. C++ alone gets an executable scratch mount for its compiled binary. Java compilation disables annotation processors and bounds the JVM.
 
-See [`docs/security-notes.md`](./docs/security-notes.md) for full sandbox hardening details.
+The local rootless DinD profile retains its outer 1 CPU / 512 MiB / 128-PID limits. `init: true` reaps orphaned daemon helpers. Existing deployments require an explicit drained maintenance recreation to adopt it; never raise limits or restart a shared daemon automatically. Diagnostics reports PID/memory controller events and zombie/helper counts. Working local execution does not prove per-runner kernel enforcement.
 
----
+Production/staging/unknown execution modes reject host-daemon fallback and require `runsc`, a native Linux rootless Docker daemon under systemd, cgroup v2 and advertised CPU/memory/PID support. Development cgroup exceptions cannot disable production checks. These are necessary startup checks, not security qualification: live CPU throttling, memory OOM, PID limits, gVisor workload identity, timeouts, output limits, cleanup and authenticated room isolation must all be demonstrated on the actual target.
 
-## Roadmap
+```sh
+# On the intended native Linux target, after provisioning the dedicated rootless daemon:
+NODE_ENV=production CONTAINER_RUNTIME=runsc DOCKER_HOST=unix:///run/user/<execution-uid>/docker.sock \
+  npm run eval:enforcement -- --strict --prod-pid
+```
 
-- [ ] Auth & session handling
-- [ ] Room creation & join-by-link
-- [ ] Real-time chat with typing indicators
-- [ ] Live shared code editor
-- [ ] Multi-language sandboxed execution (Python, Java, C++)
-- [ ] Execution history per room/user
-- [ ] Cloud deployment
-
----
-
-## License
-
-This project is for academic purposes as part of a semester-scale full-stack development project.
-
----
+The resource harness does not create all application-path evidence and cannot independently certify a release. Windows/Docker Desktop and WSL are not accepted production targets. Deployment remains blocked until the native target and its full evidence are available.

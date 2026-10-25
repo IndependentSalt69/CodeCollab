@@ -1,3 +1,7 @@
+# Current release gate (2026-10-25)
+
+See [CODEX_COMPLETION_REPORT.md](CODEX_COMPLETION_REPORT.md) for current evidence. Production/staging/unknown execution modes reject host fallback and require runsc, native rootless systemd Docker and cgroup v2 capability checks. These are not live enforcement proof. Historical notes below do not constitute production approval.
+
 # CodeCollab Security Specification & Notes
 
 ## 1. Authentication & Password Security

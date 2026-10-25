@@ -15,6 +15,7 @@ import { useAuth } from './context/AuthContext';
 import LoginPage from './pages/Login/LoginPage';
 import SignupPage from './pages/Signup/SignupPage';
 import DashboardPage from './pages/Dashboard/DashboardPage';
+import { API_BASE_URL, REALTIME_URL } from './services/apiConfig';
 
 type RoomMember = {
   socketId: string;
@@ -247,13 +248,13 @@ export default function App() {
   useEffect(() => {
     if (!isAuthenticated || !activeRoom) return;
 
-    fetch('http://localhost:5000/health')
+    fetch(`${API_BASE_URL}/health`)
       .then((res) => res.json())
       .then((data) => setBackendStatus(data.status || 'connected'))
       .catch(() => setBackendStatus('offline'));
 
     // Authenticated socket connection with JWT
-    const socket = initClientSocket('http://localhost:5000', {
+    const socket = initClientSocket(REALTIME_URL, {
       auth: { token: authToken },
     });
     socketRef.current = socket;

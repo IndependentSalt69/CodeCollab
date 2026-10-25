@@ -32,6 +32,10 @@ function parseDockerConnectionConfig(dockerHostInput, options = {}) {
     ? Boolean(options.allowHostSocket)
     : (process.env.ALLOW_HOST_DOCKER_SOCKET === 'true');
 
+  if (!['development', 'test'].includes(process.env.NODE_ENV) && (allowFallback || allowHostSocket)) {
+    throw new Error('Host Docker fallback/host socket overrides are not permitted in production, staging or unknown deployment modes.');
+  }
+
   // Case 1: Missing DOCKER_HOST
   if (!dockerHost) {
     if (allowFallback) {
@@ -340,11 +344,27 @@ async function verifyCgroupCapabilities(dockerClient, options = {}) {
 }
 
 
+// Capability checks are a startup gate, never a substitute for observed kernel qualification.
+async function verifyProductionDaemon(dockerClient, runtime, nodeEnv = process.env.NODE_ENV) {
+  const local = nodeEnv === 'test' || (nodeEnv === 'development' && TRUSTED_LOCAL_DEV_PROFILES.includes(process.env.EXECUTION_PROFILE));
+  if (local) return;
+  if (validateRuntime(runtime) !== 'runsc') throw new Error('Production execution requires CONTAINER_RUNTIME=runsc; no runtime downgrade is permitted.');
+  const info = await dockerClient.info();
+  const rootless = (info.SecurityOptions || []).some(option => /(^|[=:])rootless($|[=:])/.test(option));
+  if (!rootless || info.CgroupDriver !== 'systemd' || info.CgroupVersion !== '2' ||
+      /docker desktop|microsoft|wsl/i.test(`${info.OperatingSystem || ''} ${info.KernelVersion || ''}`)) {
+    throw new Error('Production execution requires native Linux rootless Docker under systemd with cgroup v2; Desktop/WSL targets are not qualified.');
+  }
+  await verifyCgroupCapabilities(dockerClient);
+  await verifyRuntimeAvailable(dockerClient, 'runsc');
+}
+
 module.exports = {
   parseDockerConnectionConfig,
   validateRuntime,
   verifyRuntimeAvailable,
   verifyCgroupCapabilities,
+  verifyProductionDaemon,
   SUPPORTED_RUNTIMES,
   TRUSTED_LOCAL_DEV_PROFILES,
 };

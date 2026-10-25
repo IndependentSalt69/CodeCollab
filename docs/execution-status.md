@@ -1,3 +1,7 @@
+# Current assessment (2026-10-25)
+
+See [CODEX_COMPLETION_REPORT.md](CODEX_COMPLETION_REPORT.md) for current live tests, startup changes and blockers. Production requires runsc and native rootless systemd/cgroup v2 capability checks; live enforcement qualification remains mandatory. Earlier results below are historical.
+
 ## Current Qualification Status (2026-10-18)
 
 - **Release status:** `NOT_QUALIFIED_FOR_PRODUCTION`. No intended native Linux production target was available.

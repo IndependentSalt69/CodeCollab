@@ -3,7 +3,7 @@ const { PassThrough } = require('stream');
 const sandboxConfig = require('./sandboxConfig');
 const { parseMemoryToBytes, parseCpuToNanoCPUs } = require('./resourceLimits');
 
-const { parseDockerConnectionConfig, validateRuntime, verifyRuntimeAvailable } = require('./dockerConfig');
+const { parseDockerConnectionConfig, validateRuntime, verifyRuntimeAvailable, verifyProductionDaemon } = require('./dockerConfig');
 
 // Singleton Docker instance for the execution engine
 let dockerInstance = null;
@@ -71,6 +71,7 @@ async function runInSandbox({
   const selectedRuntime = validateRuntime(runtime);
 
   const docker = getDockerClient();
+  await verifyProductionDaemon(docker, selectedRuntime);
 
   // If gVisor (runsc) is requested, verify daemon support; never silently downgrade
   if (selectedRuntime === 'runsc') {

@@ -4,5 +4,5 @@ module.exports = {
     ['@babel/preset-react', { runtime: 'automatic' }],
     '@babel/preset-typescript',
   ],
-  plugins: ['babel-plugin-transform-import-meta'],
+  plugins: ['./testing/babelImportMetaEnv.js', 'babel-plugin-transform-import-meta'],
 };
