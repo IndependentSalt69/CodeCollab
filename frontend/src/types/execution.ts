@@ -12,7 +12,7 @@ export interface ExecutionResult {
   sessionId?: string;
   seq?: number;
   inputClosed?: boolean;
-  segments?: { channel: 'stdout' | 'stderr'; text: string }[];
+  segments?: { channel: 'stdout' | 'stderr'; text: string; seq?: number }[];
   runId?: string;
   roomId?: string;
   status: ExecutionStatus;
