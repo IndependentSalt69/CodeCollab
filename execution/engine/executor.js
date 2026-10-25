@@ -28,11 +28,79 @@ function resetDockerClient() {
 const { LANGUAGE_IMAGE_MAP, EXECUTABLE_LANGUAGES } = require('./languages');
 
 /**
+ * Parses Docker multiplexed stream buffer into stdout and stderr strings with output limits.
+ *
+ * @param {Buffer} buffer
+ * @param {number} [maxOutput]
+ * @returns {{ stdout: string, stderr: string, outputLimitExceeded: boolean, limitExceededReason: string }}
+ */
+function demuxBuffer(buffer, maxOutput = sandboxConfig.MAX_OUTPUT_BUFFER_BYTES) {
+  let stdout = '';
+  let stderr = '';
+  let stdoutBytes = 0;
+  let stderrBytes = 0;
+  let outputLimitExceeded = false;
+  let limitExceededReason = '';
+
+  if (!buffer || !Buffer.isBuffer(buffer)) {
+    return { stdout, stderr, outputLimitExceeded, limitExceededReason };
+  }
+
+  let offset = 0;
+  while (offset + 8 <= buffer.length) {
+    const type = buffer.readUInt8(offset);
+    const length = buffer.readUInt32BE(offset + 4);
+    offset += 8;
+    const chunk = buffer.subarray(offset, Math.min(offset + length, buffer.length));
+    offset += length;
+
+    if (type === 1) {
+      if (!outputLimitExceeded) {
+        const chunkLen = chunk.length;
+        if (stdoutBytes + chunkLen > maxOutput) {
+          outputLimitExceeded = true;
+          limitExceededReason = 'stdout exceeded maximum limit of 64KB';
+          const remaining = Math.max(0, maxOutput - stdoutBytes);
+          if (remaining > 0) {
+            stdout += chunk.subarray(0, remaining).toString('utf8');
+            stdoutBytes += remaining;
+          }
+          stdout += '\n[Output truncated: exceeded 64KB limit]';
+        } else {
+          stdoutBytes += chunkLen;
+          stdout += chunk.toString('utf8');
+        }
+      }
+    } else if (type === 2) {
+      if (!outputLimitExceeded) {
+        const chunkLen = chunk.length;
+        if (stderrBytes + chunkLen > maxOutput) {
+          outputLimitExceeded = true;
+          limitExceededReason = 'stderr exceeded maximum limit of 64KB';
+          const remaining = Math.max(0, maxOutput - stderrBytes);
+          if (remaining > 0) {
+            stderr += chunk.subarray(0, remaining).toString('utf8');
+            stderrBytes += remaining;
+          }
+          stderr += '\n[Output truncated: exceeded 64KB limit]';
+        } else {
+          stderrBytes += chunkLen;
+          stderr += chunk.toString('utf8');
+        }
+      }
+    }
+  }
+
+  return { stdout, stderr, outputLimitExceeded, limitExceededReason };
+}
+
+/**
  * Runs submitted code in an ephemeral Docker container.
  *
  * @param {Object} options
  * @param {string} options.language - 'python', 'cpp', or 'java'
  * @param {string} options.code - User source code
+ * @param {string} [options.stdin] - Standard input provided to the program
  * @param {number} [options.timeout] - Max execution time in ms (default 5000, capped at 10000)
  * @param {string|number} [options.memory] - Max memory (default '256m', capped at 256m)
  * @param {string|number} [options.cpu] - CPU quota (default '0.5')
@@ -42,6 +110,7 @@ const { LANGUAGE_IMAGE_MAP, EXECUTABLE_LANGUAGES } = require('./languages');
 async function runInSandbox({
   language,
   code,
+  stdin,
   timeout = sandboxConfig.DEFAULT_TIMEOUT_MS,
   memory = sandboxConfig.DEFAULT_MEMORY,
   cpu = sandboxConfig.cpu,
@@ -66,6 +135,17 @@ async function runInSandbox({
   if (Buffer.byteLength(code, 'utf8') > sandboxConfig.MAX_CODE_SIZE_BYTES) {
     throw new Error(`Code exceeds maximum allowed size of ${sandboxConfig.MAX_CODE_SIZE_BYTES / 1024}KB`);
   }
+
+  // Defensive stdin type and size boundary (64 KiB)
+  if (stdin !== undefined && stdin !== null) {
+    if (typeof stdin !== 'string') {
+      throw new Error('stdin must be a string');
+    }
+    if (Buffer.byteLength(stdin, 'utf8') > sandboxConfig.MAX_STDIN_SIZE_BYTES) {
+      throw new Error(`stdin exceeds maximum allowed size of ${sandboxConfig.MAX_STDIN_SIZE_BYTES / 1024}KB`);
+    }
+  }
+  const hasStdin = typeof stdin === 'string';
 
   // Validate container runtime (runc or runsc)
   const selectedRuntime = validateRuntime(runtime);
@@ -96,10 +176,12 @@ async function runInSandbox({
   const startTime = Date.now();
   let timedOut = false;
   let timer = null;
+  let outputMonitor = null;
+  let stdinSocket = null;
 
   try {
     // 1. Create ephemeral container with resource limits, read-only rootfs & isolation
-    container = await docker.createContainer({
+    const containerOpts = {
       Image: imageName,
       Cmd: ['--code', code],
       AttachStdout: true,
@@ -125,14 +207,42 @@ async function runInSandbox({
         },
         ...(selectedRuntime === 'runsc' ? { Runtime: 'runsc' } : {}),
       },
-    });
+    };
+
+    if (hasStdin) {
+      containerOpts.AttachStdin = true;
+      containerOpts.OpenStdin = true;
+      containerOpts.StdinOnce = true;
+    }
+
+    container = await docker.createContainer(containerOpts);
 
     // 2. Attach multiplexed streams before starting
-    const stream = await container.attach({
-      stream: true,
-      stdout: true,
-      stderr: true,
-    });
+    let stream = null;
+    if (hasStdin) {
+      stdinSocket = await new Promise((resolve, reject) => {
+        const optsf = {
+          path: `/containers/${container.id}/attach?stream=1&stdin=1&stdout=1&stderr=1`,
+          method: 'POST',
+          isStream: true,
+          hijack: true,
+          openStdin: false,
+          file: Buffer.from(''),
+          statusCodes: { 200: true, 404: 'no such container', 500: 'server error' },
+        };
+        docker.modem.dial(optsf, (err, sock) => {
+          if (err) return reject(err);
+          resolve(sock);
+        });
+      });
+      stream = stdinSocket;
+    } else {
+      stream = await container.attach({
+        stream: true,
+        stdout: true,
+        stderr: true,
+      });
+    }
 
     const stdoutStream = new PassThrough();
     const stderrStream = new PassThrough();
@@ -192,7 +302,31 @@ async function runInSandbox({
     // 3. Start container
     await container.start();
 
-    // 4. Set timeout enforcement
+    // 4. Send stdin and close stream so container receives EOF
+    if (hasStdin && stdinSocket) {
+      if (stdin.length > 0) {
+        stdinSocket.write(stdin);
+      }
+      stdinSocket.end();
+    }
+
+    // Monitor output limits actively for stdin-attached runs
+    if (hasStdin) {
+      outputMonitor = setInterval(async () => {
+        try {
+          if (!container || outputLimitExceeded || timedOut) return;
+          const logs = await container.logs({ stdout: true, stderr: true });
+          if (logs.length > MAX_OUTPUT) {
+            outputLimitExceeded = true;
+            limitExceededReason = 'output exceeded maximum limit of 64KB';
+            clearInterval(outputMonitor);
+            await container.kill().catch(() => {});
+          }
+        } catch (_) {}
+      }, 100);
+    }
+
+    // 5. Set timeout enforcement
     const timeoutPromise = new Promise((resolve) => {
       timer = setTimeout(async () => {
         timedOut = true;
@@ -205,7 +339,7 @@ async function runInSandbox({
       }, timeoutMs);
     });
 
-    // 5. Wait for container completion or timeout
+    // 6. Wait for container completion or timeout
     const waitPromise = container.wait().then((data) => ({ timedOut: false, data }));
 
     const outcome = await Promise.race([waitPromise, timeoutPromise]);
@@ -214,9 +348,27 @@ async function runInSandbox({
       clearTimeout(timer);
       timer = null;
     }
+    if (outputMonitor) {
+      clearInterval(outputMonitor);
+      outputMonitor = null;
+    }
 
     // Allow stream chunks to finish flushing
     await new Promise((resolve) => setTimeout(resolve, 50));
+
+    // For runs with stdin, retrieve full output from container log buffer to capture any trailing output
+    if (hasStdin && container) {
+      try {
+        const logBuffer = await container.logs({ stdout: true, stderr: true });
+        const demuxed = demuxBuffer(logBuffer, MAX_OUTPUT);
+        if (demuxed.outputLimitExceeded) {
+          outputLimitExceeded = true;
+          limitExceededReason = demuxed.limitExceededReason;
+        }
+        stdoutBuffer = demuxed.stdout;
+        stderrBuffer = demuxed.stderr;
+      } catch (_) {}
+    }
 
     const executionTimeMs = Date.now() - startTime;
 
@@ -285,7 +437,15 @@ async function runInSandbox({
     if (timer) {
       clearTimeout(timer);
     }
-    // 6. Force remove container to guarantee ephemeral cleanup
+    if (outputMonitor) {
+      clearInterval(outputMonitor);
+    }
+    if (stdinSocket) {
+      try {
+        stdinSocket.destroy();
+      } catch (_) {}
+    }
+    // 7. Force remove container to guarantee ephemeral cleanup
     if (container) {
       try {
         await container.remove({ force: true });
@@ -307,5 +467,6 @@ module.exports = {
   parseMemoryToBytes,
   parseCpuToNanoCPUs,
   LANGUAGE_IMAGE_MAP,
+  demuxBuffer,
 };
 

@@ -1,4 +1,217 @@
-# CodeCollab completion report — 2026-10-25
+# CodeCollab Completion Report: Standard Input (stdin) Implementation for Python, C++, and Java — 2026-10-25
+
+## Executive Summary
+
+Implemented Standard Input (stdin) for the CodeCollab multi-language execution platform (Python, C++, and Java) across the frontend editor, API controllers, services, database schema, BullMQ queue, sandboxed worker, and language runner protocols. Users can now enter multiline standard input before clicking **Run Code**, which is securely streamed into the sandbox container's standard input stream (`sys.stdin` / `input()` in Python, `std::cin` / `getline` in C++, and `Scanner(System.in)` in Java) and automatically closed to deliver EOF once exhausted.
+
+All 12 regression test areas have been implemented and verified. The full Jest test suite of **30 test suites (509 passing tests, 3 skipped opt-in tests, 0 failures)** passed completely. Real live execution tests against both the host Docker daemon and the running Compose execution worker confirmed that addition programs in Python, C++, and Java all correctly read input and produce `30`, and gracefully handle empty input without hanging.
+
+---
+
+## 1. Laptop Demo Assessment & Readiness Status
+
+- **Laptop Demo Status:** **READY** for local code execution with standard input across Python, C++, and Java.
+- **Backend Dependency Readiness (`/ready`):** Returns `HTTP 200` with `{"status":"ready","database":true,"redis":true}`. Both MongoDB and Redis connections are live and healthy.
+- **Frontend UI Delivery:** Static bundle served by Nginx on `http://localhost:3000/` contains the Standard Input textarea (`id="stdin-input"`), accessible label, and placeholder.
+- **Browser Automation Verification:** **BLOCKED** for automated Playwright runner due to upstream CDN 404 driver download failure on Windows. Frontend component tests, DOM assertions, and bundle inspection **PASS**.
+- **Production Status:** **NOT_QUALIFIED_FOR_PRODUCTION** (Strict kernel cgroup v2 probes, gVisor runsc, and production identity are reserved for dedicated native Linux targets).
+
+### Assessment Matrix
+
+| Component / Requirement | Status | Details / Evidence |
+| :--- | :---: | :--- |
+| **Python Standard Input** | **PASS** | `input()` and `sys.stdin` receive multiline/unicode input; EOF sent upon completion. Live Docker tests return `30\n` and `EOFError` on empty input. |
+| **C++ Standard Input** | **PASS** | `cin >> a >> b` receives input via standard input; compiler runs with `stdin=DEVNULL`, binary inherits container stdin. Returns `30\n`. |
+| **Java Standard Input** | **PASS** | `Scanner(System.in)` receives standard input; `javac` runs with `stdin=DEVNULL`, `java Main` inherits container stdin. Returns `30\n`. |
+| **Empty Input / EOF Behavior** | **PASS** | Immediate EOF on empty input; programs terminate or raise EOFError / NoSuchElementException without hanging. |
+| **Metacharacter & Data Safety** | **PASS** | Quotes, subshells, `$PATH`, pipes, redirects treated strictly as stdin data, never as shell commands. |
+| **64 KiB Stdin Boundary** | **PASS** | Request boundary and execution engine reject non-string types and oversized payloads (> 64 KiB) with HTTP 400. |
+| **Frontend Stdin Field** | **PASS** | `<textarea id="stdin-input">` multiline textarea added near editor; retains input across runs; sends `stdin` with execution request. |
+| **Container & Socket Cleanup** | **PASS** | Containers forcibly removed after run; socket destroyed in `finally` block; timeout and output-limit monitors cleanly cleared. |
+| **Live Docker Execution** | **PASS** | Exercised in live Docker Desktop engine and nested rootless execution daemon (`infrastructure-execution-worker-1`). |
+| **Full Regression Suite** | **PASS** | `npm test` passed 30 suites, 509 tests, 0 failures. `testing/execution/stdin_execution.test.js` passed all 12 cases. |
+| **Browser Real Stack Test** | **BLOCKED** | Playwright driver 404 download error from Azure/Akamai CDN. Bundle verified with `grep` and Jest DOM tests pass. |
+
+---
+
+## 2. Request-to-Runner Stdin Data Flow
+
+```
++-------------------------------------------------------------------------------+
+|  1. Frontend (Browser / React App.tsx)                                        |
+|     - User enters input into <textarea id="stdin-input">                      |
+|     - Value stored in React state `stdin`                                     |
+|     - User clicks "Run Code"                                                  |
+|     - submitCodeExecution({ roomId, language, code, stdin, socketId }, token) |
++---------------------------------------+---------------------------------------+
+                                        | (HTTP POST /api/execute)
+                                        v
++---------------------------------------+---------------------------------------+
+|  2. Backend Controller (executionController.js)                               |
+|     - Extracts `stdin` from req.body                                          |
+|     - Passes `stdin` to `executeCodeService`                                  |
++---------------------------------------+---------------------------------------+
+                                        |
+                                        v
++---------------------------------------+---------------------------------------+
+|  3. Backend Service (executionService.js)                                     |
+|     - Validates `stdin`: must be string, byteLength(UTF-8) <= 64 KiB          |
+|     - Rejects invalid types or oversized inputs with HTTP 400                 |
+|     - Sanitizes `stdin` (defaults to empty string if omitted)                 |
+|     - Persists record with `stdin` in MongoDB `ExecutionRun` model            |
+|     - Enqueues job in BullMQ via `executionQueue.execute({ ..., stdin })`     |
++---------------------------------------+---------------------------------------+
+                                        | (Redis queue: codecollab-execution-queue)
+                                        v
++---------------------------------------+---------------------------------------+
+|  4. Execution Worker & Engine (worker/index.js & executeCode.js)              |
+|     - Worker receives job data: `{ language, code, stdin, timeout, memory }` |
+|     - Passes payload to `executeCode` -> `runInSandbox`                       |
++---------------------------------------+---------------------------------------+
+                                        |
+                                        v
++---------------------------------------+---------------------------------------+
+|  5. Docker Sandbox Executor (executor.js)                                     |
+|     - Defensively validates `stdin` type and 64 KiB size boundary             |
+|     - Configures container options:                                           |
+|         AttachStdin: true, OpenStdin: true, StdinOnce: true                   |
+|     - Hijacks Docker modem attach stream:                                     |
+|         POST /containers/{id}/attach?stream=1&stdin=1&stdout=1&stderr=1       |
+|     - Starts container                                                        |
+|     - Writes `stdin` buffer to socket and immediately calls `socket.end()`    |
+|       (signals EOF to container stdin)                                        |
+|     - Monitors stdout/stderr and output cap (64KB)                            |
+|     - In `finally`: destroys stdinSocket and forcibly removes container       |
++---------------------------------------+---------------------------------------+
+                                        | (Container Stdin Pipe)
+                                        v
++---------------------------------------+---------------------------------------+
+|  6. Language Runners (compiled_runner.py & python_runner)                    |
+|     - Python runner: reads from container stdin directly via sys.stdin        |
+|     - Compiled runner (C++ & Java):                                           |
+|         * Compilation phase (g++, javac): stdin = subprocess.DEVNULL          |
+|         * Execution phase (./a.out, java Main): stdin = None (inherits stdin) |
+|     - Programs read input via cin, Scanner, or input(); receives EOF on end.  |
++-------------------------------------------------------------------------------+
+```
+
+---
+
+## 3. Files Changed and Implementation Details
+
+| File | Changes Made & Implementation Details |
+| :--- | :--- |
+| `frontend/src/types/execution.ts` | Added `stdin?: string` to `ExecuteCodePayload` interface. |
+| `frontend/src/App.tsx` | Added `stdin` state (`useState<string>('')`), `<textarea id="stdin-input">` multiline input box with accessible label and helper text above the Terminal, and attached `stdin` to the execution request in `handleExecuteCode`. |
+| `backend/src/controllers/executionController.js` | Destructured `stdin` from `req.body` and passed it into `executeCodeService`. |
+| `backend/src/services/executionService.js` | Added `validateExecutionRequest` validation ensuring `stdin` is a string and byte length <= 64 KiB. Defaults `sanitizedStdin` to empty string. Persists `stdin` in `ExecutionRun` document and passes it to `executionQueue.execute`. |
+| `database/models/ExecutionRun.js` | Added `stdin: { type: String, default: '' }` to the execution run schema. |
+| `execution/engine/sandboxConfig.js` | Defined `MAX_STDIN_SIZE_BYTES = 64 * 1024` (64 KiB). |
+| `execution/engine/queue.js` | Propagated `stdin` through job processor and queue execution method, adding defensive type and size checks before enqueuing. |
+| `execution/worker/index.js` | Extracted `stdin` from `job.data` and passed to `executeCode`. |
+| `execution/engine/executeCode.js` | Passed `stdin` option through to `runInSandbox`. |
+| `execution/engine/executor.js` | Added defensive type/size checks; configured container with `AttachStdin`, `OpenStdin`, `StdinOnce`; hijacked Docker modem attach socket for stdin; wrote stdin buffer and called `socket.end()` to deliver EOF; demuxed log buffers; guaranteed cleanup in `finally`. |
+| `execution/runners/compiled_runner.py` | Updated `run_phase` with `inherit_stdin` parameter. Set `stdin=subprocess.DEVNULL` for compiler commands (`javac`, `g++`) and `stdin=None` (`inherit_stdin=True`) for user binary execution (`./a.out`, `java Main`). |
+| `testing/backend/execute.test.js` | Added backend unit tests asserting HTTP 400 rejection for non-string stdin and oversized stdin (> 64 KiB). |
+| `testing/frontend/execution_frontend.test.js` | Added frontend unit tests verifying that current stdin value is included in execution request, spaces/newlines/Unicode are preserved, and omitted/empty stdin works backwards-compatibly. |
+| `testing/execution/stdin_execution.test.js` (new) | Created comprehensive regression test suite covering all 12 regression test areas with live Docker containers and verification of post-test container removal. |
+
+---
+
+## 4. New Limits and Validation Behavior
+
+- **Maximum Stdin Size:** 64 KiB UTF-8 byte length (`sandboxConfig.MAX_STDIN_SIZE_BYTES = 65,536 bytes`).
+- **Request Boundary Validation:**
+  - Non-string `stdin` (e.g. number, object) -> HTTP 400 Bad Request (`"stdin must be a string"`).
+  - Exceeding 64 KiB -> HTTP 400 Bad Request (`"stdin exceeds maximum allowed size of 64KB"`).
+  - Omitted or null `stdin` -> Normalized to empty string `""` for safe processing.
+- **Defensive Execution Boundary:**
+  - `ExecutionQueue.execute` and `executor.js` repeat the type and 64 KiB boundary check before container instantiation, ensuring oversized or malformed payloads cannot cause worker resource exhaustion.
+- **Existing Sandbox Limits Preserved:**
+  - Maximum source code size: 64 KiB.
+  - Maximum output buffer: 64 KiB (monitored and truncated cleanly).
+  - Memory limit: 256 MiB (capped).
+  - CPU quota: 0.5 (50,000 / 100,000 CFS bandwidth).
+  - PID limit: 64 processes.
+  - Execution timeout: 5000ms default, hard cap at 10000ms.
+  - Network: completely disabled (`NetworkMode: 'none'`).
+  - Ephemeral isolation: read-only root filesystem, tmpfs `/tmp`, non-root `sandbox` user, dropped Linux capabilities (`cap_drop: ALL`), `no-new-privileges: true`.
+
+---
+
+## 5. Test Commands and Actual Verification Results
+
+### Regression Suite Summary
+
+| Test Suite / Command | Total Tests | Passed | Skipped | Failed | Result |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| `npm run test:frontend` | 57 | 57 | 0 | 0 | **PASS** |
+| `npm run test:backend` | 60 | 60 | 0 | 0 | **PASS** |
+| `npm run test:execution` | 86 | 86 | 0 | 0 | **PASS** |
+| `npm run test:realtime` | 24 | 24 | 0 | 0 | **PASS** |
+| `npx jest testing/security testing/redis_config.test.js` | 271 | 271 | 0 | 0 | **PASS** |
+| `npm test` (Full Suite) | 512 | 509 | 3 (opt-in) | 0 | **PASS** |
+| `npm run build` (Frontend Bundle) | 122 modules | - | - | - | **PASS** |
+
+### Live Execution Demonstration Results (Section 6 Requirements)
+
+Tested live against both the local Docker engine and the nested execution daemon in `infrastructure-execution-worker-1`:
+
+#### Python:
+```python
+a = int(input())
+b = int(input())
+print(a + b)
+```
+- **Input:** `10\n20\n`
+- **Output:** `30\n` (Status: `completed`, Exit Code: `0`) -> **PASS**
+- **Empty Input:** Terminated immediately with `EOFError: EOF when reading a line` (Status: `failed`, Exit Code: `1`) -> **PASS**
+
+#### C++:
+```cpp
+#include <iostream>
+using namespace std;
+
+int main() {
+    int a, b;
+    cin >> a >> b;
+    cout << a + b << '\n';
+    return 0;
+}
+```
+- **Input:** `10\n20\n`
+- **Output:** `30\n` (Status: `completed`, Exit Code: `0`) -> **PASS**
+- **Empty Input:** Terminated without hanging (Status: `completed`, Exit Code: `0`, `cin.eof()` flag set) -> **PASS**
+
+#### Java:
+```java
+import java.util.Scanner;
+
+public class Main {
+    public static void main(String[] args) {
+        Scanner sc = new Scanner(System.in);
+        int a = sc.nextInt();
+        int b = sc.nextInt();
+        System.out.println(a + b);
+        sc.close();
+    }
+}
+```
+- **Input:** `10\n20\n`
+- **Output:** `30\n` (Status: `completed`, Exit Code: `0`) -> **PASS**
+- **Empty Input:** Terminated immediately with `java.util.NoSuchElementException` (Status: `failed`, Exit Code: `1`) -> **PASS**
+
+---
+
+## 6. Remaining Failures and Limitations
+
+1. **Browser Automation Testing:** Automated Playwright execution via browser subagent is currently `BLOCKED` because Playwright driver binaries fail to download on this Windows host (404 from upstream Azure/Akamai CDN). Manual browser usage at `http://localhost:3000/` and Jest DOM component assertions are operational.
+2. **Production Qualification:** The project remains classified `NOT_QUALIFIED_FOR_PRODUCTION`. Windows host execution does not support Linux cgroup v2 kernel resource-enforcement probes or native gVisor `runsc`.
+
+---
+
+# CodeCollab completion report — Historical Reference (Prior Hardening Run)
+
 
 ## Subsequent Git publication authorization
 

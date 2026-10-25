@@ -69,6 +69,7 @@ export default function App() {
   // Editor state
   const [code, setCode] = useState<string>(DEFAULT_PYTHON_CODE);
   const [language, setLanguage] = useState<string>('python');
+  const [stdin, setStdin] = useState<string>('');
 
   // Execution state
   const [isExecuting, setIsExecuting] = useState<boolean>(false);
@@ -170,6 +171,7 @@ export default function App() {
         roomId,
         language,
         code,
+        stdin,
         socketId: myId,
       },
       authToken
@@ -831,6 +833,43 @@ export default function App() {
           readOnly={!isDriver}
           onChange={handleCodeChange}
           height="320px"
+        />
+      </div>
+
+      {/* Standard Input (stdin) Section */}
+      <div style={{ marginBottom: '1.25rem', background: '#ffffff', padding: '1rem 1.25rem', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+          <label
+            htmlFor="stdin-input"
+            style={{ fontWeight: 600, fontSize: '0.95rem', color: '#1e293b' }}
+          >
+            Standard Input (stdin)
+          </label>
+          <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
+            Supplied to the program via standard input when Run Code is clicked
+          </span>
+        </div>
+        <textarea
+          id="stdin-input"
+          value={stdin}
+          onChange={(e) => setStdin(e.target.value)}
+          placeholder="Enter standard input here before running code (multiline supported)..."
+          rows={3}
+          style={{
+            width: '100%',
+            boxSizing: 'border-box',
+            fontFamily: 'Consolas, Monaco, "Courier New", monospace',
+            fontSize: '0.875rem',
+            lineHeight: '1.4',
+            padding: '8px 12px',
+            borderRadius: '6px',
+            border: '1px solid #cbd5e1',
+            background: '#f8fafc',
+            color: '#0f172a',
+            resize: 'vertical',
+            minHeight: '70px',
+            whiteSpace: 'pre',
+          }}
         />
       </div>
 

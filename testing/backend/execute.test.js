@@ -300,6 +300,37 @@ describe('Backend Execution API Tests (POST /api/execute - M0.5d)', () => {
       expect(res.status).toBe(400);
       expect(res.body.error).toMatch(/positive number/i);
     });
+
+    test('should reject invalid stdin type with 400', async () => {
+      const res = await request(app)
+        .post('/api/execute')
+        .set('Authorization', `Bearer ${driverToken}`)
+        .send({
+          roomId: testRoomId,
+          language: 'python',
+          code: 'print(1)',
+          stdin: 12345,
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/stdin must be a string/i);
+    });
+
+    test('should reject oversized stdin exceeding 64KB with 400', async () => {
+      const oversizedStdin = 'a'.repeat(65 * 1024);
+      const res = await request(app)
+        .post('/api/execute')
+        .set('Authorization', `Bearer ${driverToken}`)
+        .send({
+          roomId: testRoomId,
+          language: 'python',
+          code: 'print(1)',
+          stdin: oversizedStdin,
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/stdin exceeds maximum allowed size/i);
+    });
   });
 
   describe('3. Successful Driver Execution and Realtime Broadcasts', () => {

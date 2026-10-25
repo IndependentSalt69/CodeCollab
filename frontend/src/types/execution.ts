@@ -24,6 +24,7 @@ export interface ExecuteCodePayload {
   roomId: string;
   language: string;
   code: string;
+  stdin?: string;
   timeout?: number;
   memory?: string;
   socketId?: string;

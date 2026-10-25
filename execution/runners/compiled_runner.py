@@ -18,9 +18,11 @@ JAVA_LIMITS = [
 ]
 
 
-def run_phase(argv, directory):
-    # No shell, user filenames, class names, compiler flags, or inherited stdin.
-    child = subprocess.Popen(argv, cwd=directory, stdin=subprocess.DEVNULL,
+def run_phase(argv, directory, inherit_stdin=False):
+    # No shell, user filenames, class names, or compiler flags.
+    # Compiler runs with DEVNULL; executed user program inherits container stdin.
+    stdin_target = None if inherit_stdin else subprocess.DEVNULL
+    child = subprocess.Popen(argv, cwd=directory, stdin=stdin_target,
                              start_new_session=True)
     try:
         result = child.wait()
@@ -56,10 +58,10 @@ def main():
             compiler = ["javac", *["-J" + flag for flag in JAVA_LIMITS], "-encoding", "UTF-8",
                         "-proc:none", "-d", directory, "Main.java"]
             program = ["java", *JAVA_LIMITS, "-cp", directory, "Main"]
-        result = run_phase(compiler, directory)
+        result = run_phase(compiler, directory, inherit_stdin=False)
         if result != 0:
             return result
-        return run_phase(program, directory)
+        return run_phase(program, directory, inherit_stdin=True)
 
 
 if __name__ == "__main__":
