@@ -1,5 +1,27 @@
 import { ExecutionResult, ExecutionStatus } from '../types/execution';
 
+export class TerminalRequestError extends Error {
+  constructor(message: string, public readonly uncertain = false) { super(message); }
+}
+
+export type TerminalEcho = { id: number; afterSeq: number; text: string };
+
+// Anchor local stdin at submission time, before any later worker output. Docker
+// pipes do not echo stdin. No effect-based copying or text/overlap guessing.
+export function terminalTranscript(segments: NonNullable<ExecutionResult['segments']>, echoes: TerminalEcho[]) {
+  const transcript: { channel: 'stdout' | 'stderr' | 'stdin'; text: string }[] = [];
+  let input = 0;
+  segments.forEach((segment, index) => {
+    const seq = segment.seq ?? index + 1;
+    while (input < echoes.length && echoes[input].afterSeq < seq) {
+      transcript.push({ channel: 'stdin', text: echoes[input++].text });
+    }
+    transcript.push(segment);
+  });
+  for (; input < echoes.length; input++) transcript.push({ channel: 'stdin', text: echoes[input].text });
+  return transcript;
+}
+
 export type TerminalEvent = {
   sessionId: string; roomId: string; seq: number; type: 'status' | 'output' | 'finished';
   status?: ExecutionStatus; channel?: 'stdout' | 'stderr'; text?: string;
@@ -17,7 +39,7 @@ export function applyTerminalEvent(previous: ExecutionResult | null, event: Term
   if (event.type === 'output' && (event.channel === 'stdout' || event.channel === 'stderr') && typeof event.text === 'string') {
     if (event.text.length > 4200 || previous.stdout.length + previous.stderr.length + event.text.length > 132000) return previous;
     next[event.channel] += event.text;
-    next.segments = [...(previous.segments || []), { channel: event.channel, text: event.text }].slice(-2048);
+    next.segments = [...(previous.segments || []), { channel: event.channel, text: event.text, seq: event.seq }].slice(-2048);
   } else if (event.type === 'status' && (event.status === 'starting' || event.status === 'running')) next.status = event.status;
   else if (event.type === 'finished' && event.status && ['completed', 'failed', 'timeout', 'cancelled'].includes(event.status)) {
     Object.assign(next, { status: event.status, inputClosed: true, exitCode: event.exitCode,

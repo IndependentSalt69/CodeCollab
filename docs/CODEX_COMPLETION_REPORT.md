@@ -1,4 +1,102 @@
-# Current completion report: live interactive terminal — 2026-10-25
+# Current completion report: true inline terminal input — 2026-10-25
+
+## Outcome and root cause
+
+**Inline input is implemented and verified in the actual authenticated browser for Python, C++17 and Java 17.** Users type directly after the program prompt, edit with Backspace and press Enter. Submitted text remains beside its prompt while output continues. There is no separate Program input footer or Send button. The existing execution protocol, worker and sandbox are unchanged.
+
+Final result: **565 passing tests, 3 skipped opt-in MongoDB tests, zero failures; 34 passing suites and 1 skipped suite.** TypeScript/Vite build passed. Only the frontend image/service was replaced. All six services are healthy and proxied readiness reports database and Redis ready. Production remains **NOT_QUALIFIED_FOR_PRODUCTION**.
+
+The initial checkout was on `feature/interactive-terminal`, commit `97b6ce88efd6e0154f029427074b97bd9e0f5e40`, with an empty index and one pre-existing unstaged edit to `Terminal.tsx`. That file already contained an inline attempt. Its layout/styling was retained while its input/transcript logic was repaired; the file was not reverted to HEAD. A byte-for-byte baseline copy was saved in the task's temporary directory before editing.
+
+Two causes were found:
+
+1. **The running frontend still served the old UI.** The actual HTML referenced `index-CX5Tmhfq.js`; that asset contained the old footer guidance and lacked the inline guidance. The browser visibly had the separate field and Send button. Source edits had not updated the running frontend container. After rebuilding/replacing only frontend, the served asset is `index-BEBcl1qj.js`.
+2. **The local attempt had acknowledgement/transcript defects.** It echoed a submitted line while continuing to display that same draft during the pending acknowledgement. It copied output in effects and guessed overlap by text, and old asynchronous callbacks could update a subsequent session. It also treated uncertain acknowledgements as definite rejection. Existing tests still submitted the removed form: the baseline run failed with 2 passing/2 failing tests.
+
+## Implementation and changed files
+
+No xterm dependency was installed. A full emulator is unnecessary for the requested line-oriented stdin interface, so the implementation extends the existing native inline input inside the transcript. It uses the existing `onInput` callback, `terminalRequest`, server session ID and sequence contract; no new wire events or execution pipeline were introduced.
+
+Each output segment now retains its existing event sequence. A local echo is anchored to the last visible output sequence at submission, so output arriving before acknowledgement still follows the entered line. Docker's non-TTY pipe does not echo stdin; the initiating client echoes once locally. Draft text is retained until acknowledgement. A definite rejection restores it for editing; uncertain delivery keeps its echo, disables retries and leaves Stop available. A keyed session component prevents old callbacks/drafts from affecting a new run.
+
+The native input supports typing, Backspace, focus and Enter (exactly one trailing newline), ignores IME confirmation Enter, and validates the existing 4 KiB UTF-8 message boundary including newline. Local echo storage is bounded. Server authorization, driver/membership/session checks, total 64 KiB stdin, output/source caps, rate limits, deadlines and container security are untouched. Clear removes history without cancelling/replaying input; EOF preserves trailing output; Stop cancels the real process.
+
+| Changed file | Purpose and verification |
+|---|---|
+| `frontend/src/components/terminal/Terminal.tsx` | Repair the pre-existing inline attempt: ordered echoes, acknowledgement/draft lifecycle, session isolation, focus and controls. Verified by focused tests and browser. |
+| `frontend/src/services/interactiveTerminal.ts` | Sequence metadata, deterministic transcript merge and typed uncertain errors. Reducer/ordering/timeout tests pass. |
+| `frontend/src/types/execution.ts` | Optional output sequence metadata; TypeScript build passes. |
+| `frontend/src/App.tsx` | Preserve the existing uncertainty flag through the existing callback; no event payload changes. Build/full suite pass. |
+| `testing/frontend/interactive_terminal.test.js` | Adapt form/Send tests to inline Enter while retaining behavior assertions; add ordering, buffering, rejection/uncertainty, stale sessions, Clear, limits, IME and terminal-state tests. All 18 pass. |
+| `README.md` | Update instructions to direct inline typing and local echo. |
+| `docs/INTERACTIVE_TERMINAL.md` | Update input, acknowledgement and transcript behavior. |
+| `docs/CODEX_COMPLETION_REPORT.md` | Current evidence and limitations above retained historical reports. |
+
+## Commands and actual results
+
+Frontend-only tests used process-only `REDIS_URL=redis://127.0.0.1:1/0`. Full tests used a separate task-owned Redis fixture, not application Redis or Atlas:
+
+```powershell
+$env:REDIS_URL='redis://127.0.0.1:50083/0'
+$env:JWT_SECRET='inline-terminal-test-only-not-a-real-credential'
+$env:MONGO_URI='mongodb://127.0.0.1:1/unused'
+$env:DOCKER_HOST='npipe:////./pipe/dockerDesktopLinuxEngine'
+npm.cmd test -- --silent --detectOpenHandles
+```
+
+The fixture `codecollab-inline-test-redis` was loopback-only, tmpfs-backed, limited to 64 MiB/64 PIDs and labeled `codecollab.temporary=inline-terminal`. It was removed after verifying that label. Recreate disposable Redis and adjust the port before rerunning. No real environment file was changed.
+
+| Command/check | Status | Actual result |
+|---|---|---|
+| `npm.cmd test -- --runTestsByPath testing/frontend/interactive_terminal.test.js --silent` before edits | BLOCKED, then FAIL | First sandbox attempt hit a Jest cache-rename EPERM. Authorized retry ran: 2 passed/2 failed due to old form/Send assumptions and absent disabled input. |
+| Same focused command after implementation | PASS | 18 tests passed. |
+| `npm.cmd run build` first implementation attempt | FAIL, fixed | TypeScript target lacked `Array.at`. Replaced the call with indexed access without raising the target. |
+| `npm.cmd test -- --runTestsByPath testing/frontend/interactive_terminal.test.js testing/frontend/react_components.test.jsx testing/frontend/api_config.test.js testing/frontend/execution_frontend.test.js --silent` | PASS | 61 tests / 4 suites. |
+| `npm.cmd run build` after correction | PASS | TypeScript + Vite; 122 modules; `index-BEBcl1qj.js`. Existing future Vite loader warning remains. |
+| `npm.cmd test -- --silent --detectOpenHandles` with isolated Redis | PASS | 565 passed, 3 skipped, 0 failed; 34 passed/1 skipped suites; 159.33 seconds. Includes live Docker/Redis/separate-worker tests and mocks/unit tests. |
+| `docker compose --env-file infrastructure/.env -f infrastructure/docker-compose.yml --profile local-dev-execution build frontend` | PASS | Frontend built before replacement, using existing scoped environment/redaction helpers. |
+| Same Compose prefix with `up -d --no-deps --no-build frontend` | PASS | Only frontend replaced; other five services/volumes preserved. |
+| `Invoke-WebRequest http://localhost:3000/` and fetched referenced asset | PASS | Confirmed old asset before changes and rebuilt asset after replacement, independently of local build output. |
+| `Invoke-WebRequest http://localhost:3000/ready` | PASS | `status=ready`, `database=true`, `redis=true`. |
+| `.\verify.ps1` | PASS with warnings | Six healthy services, all runner images and endpoint/dependency checks pass. Explicit `-ExecutionSmoke` was not run here; full live execution tests and actual browser runs were performed. |
+| Application queue counts, terminal-key scan and inner-daemon `docker ps -aq` | PASS | Zero active/waiting/delayed jobs, zero terminal keys and zero runners after control tests. No runners remained after the final visible example either. |
+| Last 80 worker log lines checked for fork/thread/OOM/resource errors | PASS for bounded check | Zero matching lines; not a claim about all historical logs. |
+| `git diff --check`; `git diff --cached --name-only`; final Git status | PASS | No whitespace errors; empty index; all changes unstaged. |
+| Real browser tests A–E | PASS | Detailed below. A browser wait returned before the 10-second deadline; a later actual UI observation confirmed Timeout. |
+| Second physical device / native Linux production qualification | NOT RUN | No suitable target supplied. Local execution does not prove production enforcement. |
+
+## Actual browser verification
+
+Used the existing signed-in account and previously authorized test room at `http://localhost:3000/`. No account, room or database records were created. Optional initial input was empty. Every response was typed only after the corresponding prompt appeared, with no restart between responses.
+
+| Requested case | Observation |
+|---|---|
+| A: Python addition | Typed `200`, corrected to `20` with native Backspace, Enter; then `15` after the next prompt. Exact transcript: `Enter a number: 20\nEnter another number: 15\nSum: 35\n`. Completed, exit 0. |
+| Cursor placement | Input is inside the transcript, focused, with a 0-pixel gap after the prompt on the same line (2-pixel top difference from native text/input metrics). Zero Send buttons. Screenshot captures the caret after `20` while running. |
+| B: no-newline prompt | Exact transcript: `What is your name? Manav\nHello, Manav\n`. Completed, exit 0. |
+| C: repeated input | `one`, `two words`, `Ω three` entered after Value 1/2/3. Each echoed beside its prompt, followed by its `Received:` output. Completed, exit 0. |
+| D: Clear/EOF | Sent `hello` to `sys.stdin.read()`, then Clear. Transcript emptied while Stop stayed enabled. EOF produced trailing `EOF received: 'hello\n'`; completed. |
+| D: Stop | Waiting program cancelled, exit 130, 286 ms; input disabled. |
+| D: timeout | Waiting without input reached Timeout, exit 124, duration 10121 ms; input disabled. Deadline unchanged. |
+| E: C++17 | Explicitly flushed prompts; separate `20`/`15` replies; same exact addition transcript and `Sum: 35`. Completed, exit 0, 790 ms. |
+| E: Java 17 | `System.out.flush()` prompts; separate `20`/`15` replies; same transcript and `Sum: 35`. Completed, exit 0, 1063 ms. |
+| Final visible state | Python addition left open with both inline echoes, `Sum: 35`, Completed and exit 0. |
+
+Screenshots `inline-terminal-cursor.png` and `inline-terminal-completed.png` are local review artifacts in this task's Codex visualization directory, outside Git. Browser tests used ordinary editor/keyboard controls, without injected authentication, hidden-state execution or mocked workers.
+
+## Limitations and Git handoff
+
+The existing 10-second total budget includes compilation and typing. This remains a line-oriented console without PTY/shell/escape emulation/job control; long lines scroll horizontally inside the native input. The backend cannot infer exactly when a program requests input, so typing is available while the process is running. Echo is local to the initiating client; optional initial input is not automatically echoed. Interactive history and reconnect/resume behavior remain as documented in the prior implementation.
+
+Final diagnostics sampled `pids.current=83`, `pids.max=128`, cumulative `pids.events max=60`; `memory.current=477351936`, `memory.max=536870912`, `memory.events max=9292`, `oom=0`, `oom_kill=0`. No pre-task resource baseline was collected, so accumulated hits cannot be attributed to this change. Bounded worker logs showed no resource errors and final execution cleanup was empty. These samples do not certify absence of leaks. No limit increase, arbitrary process kill, daemon restart or volume cleanup was performed. Native Linux/rootless-systemd/cgroup-v2/gVisor qualification remains outstanding: **NOT_QUALIFIED_FOR_PRODUCTION**.
+
+Final Git state: **8 modified tracked files, no new untracked task files, empty index**, on `feature/interactive-terminal` at `97b6ce88efd6e0154f029427074b97bd9e0f5e40`. This includes the repaired pre-existing Terminal edit. No branch switch, staging, commit, push, merge, rebase, reset, history rewrite or PR operation occurred. Environment files, credentials, database target and volumes were preserved. Review with `git status --short`, `git diff --check`, `git diff --stat` and `git diff`.
+
+---
+
+# Prior report: live interactive terminal — 2026-10-25
+
+This section records the previous committed implementation. Its older Git state, footer instructions, test counts and resource snapshots are superseded by the current inline-input report above.
 
 ## Executive summary
 

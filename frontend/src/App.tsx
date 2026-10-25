@@ -8,7 +8,7 @@ import {
 } from '../../realtime/client/events';
 import CodeEditor from './components/editor/CodeEditor';
 import Terminal from './components/terminal/Terminal';
-import { applyTerminalEvent, terminalRequest, TerminalEvent } from './services/interactiveTerminal';
+import { applyTerminalEvent, terminalRequest, TerminalEvent, TerminalRequestError } from './services/interactiveTerminal';
 import { ExecutionResult, ExecutionStatus } from './types/execution';
 import { Room } from './types/room';
 import { useAuth } from './context/AuthContext';
@@ -167,7 +167,7 @@ export default function App() {
     if (id !== terminalSession.current) return;
     if (!response?.ok) {
       if (response?.uncertain) setExecutionResult(previous => previous ? { ...previous, inputClosed: true } : previous);
-      throw Error(response?.error || 'Terminal request failed');
+      throw new TerminalRequestError(response?.error || 'Terminal request failed', response?.uncertain === true);
     }
     terminalSequence.current = response.seq;
     if (action !== 'input') setExecutionResult(previous => previous ? { ...previous, inputClosed: true } : previous);
