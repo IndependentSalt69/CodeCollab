@@ -1,232 +1,95 @@
-# CodeCollab — Collaborative Online Coding Platform
+# CodeCollab
 
-A full-stack web application that lets multiple users create shared coding rooms, communicate via real-time chat, and compile/execute code together in Python, Java, and C++ — all from the browser, with no third-party compiler APIs.
+CodeCollab provides authenticated coding rooms, a shared driver-controlled editor, chat, and Python, C++ and Java execution through a separate queue worker and Docker daemon.
 
-CodeCollab combines the functionality of an online compiler with a real-time messaging system into a single integrated platform, giving developers, students, and interviewers a live space to code, test, and collaborate together.
+**Release status: trusted prototype development only.** Local execution is tested, but the Docker Desktop/nested-daemon profile is not production-qualified. See [the current completion report](docs/CODEX_COMPLETION_REPORT.md) for measured results, remaining blockers and recovery steps. Older milestone documents are historical records.
 
----
+## Windows setup
 
-## Problem Statement
+Install Docker Desktop with Linux containers, PowerShell 5.1 or newer, and Node.js/npm for host-side tests. From the repository root:
 
-Developers often need to collaborate on code in real time — for pair programming, technical interviews, teaching, or debugging together — but existing solutions either rely on third-party platforms, lack live communication, or don't support secure server-side code execution. CodeCollab builds this experience from the ground up.
-
----
-
-## Features
-
-- **User Authentication & Authorization** — secure signup/login with JWT-based sessions
-- **Coding Rooms** — create a room and invite others via a shareable link
-- **Live Code Editor** — shared view with real-time updates broadcast to all room members
-- **Multi-Language Execution** — run Python, Java, and C++ code in isolated Docker containers
-- **Live Terminal / Output Panel** — see compiled output, errors, and runtime info instantly
-- **Integrated Real-Time Chat** — text messaging with typing indicators and live delivery per room
-- **Execution History** — past code runs saved and viewable per room and per user
-- **Sandboxed Execution** — CPU/memory/time-limited Docker containers, fully isolated from the host
-- **Cloud Deployment** — hosted on AWS/Azure/Heroku
-
-> **Scope note:** This version supports one active "driver" per room at a time — the room owner or current driver writes/runs code while others watch live updates and chat alongside. Full simultaneous multi-cursor editing (CRDT/OT) is intentionally out of scope for this build.
-
----
-
-## Tech Stack
-
-**Frontend**
-- React 18 + TypeScript
-- Monaco Editor (code editor component)
-- Socket.io-client (real-time communication)
-
-**Backend**
-- Node.js + Express
-- Socket.io (WebSocket server)
-- dockerode (Docker orchestration from Node)
-- BullMQ + Redis (execution job queue)
-
-**Execution Engine**
-- Docker containers — one per language runtime (Python, Java, C++)
-- Resource-limited, network-isolated sandboxes per run
-
-**Database**
-- MongoDB (users, rooms, chat history, execution history)
-
-**Deployment**
-- Docker Compose (local orchestration)
-- AWS EC2 / Azure / Heroku (cloud hosting)
-
----
-
-## Project Structure
-
-```
-CodeCollab/
-│
-├── frontend/                       # React + TypeScript frontend
-│   ├── src/
-│   │   ├── components/             # editor, chat, terminal, room
-│   │   ├── pages/                  # Login, Signup, Dashboard, Room, History
-│   │   ├── hooks/
-│   │   ├── context/
-│   │   ├── services/
-│   │   ├── types/
-│   │   └── App.tsx
-│   └── package.json
-│
-├── backend/                        # Node.js + Express backend API
-│   ├── src/
-│   │   ├── routes/
-│   │   ├── controllers/
-│   │   ├── middleware/
-│   │   ├── services/
-│   │   ├── config/
-│   │   └── index.js
-│   └── package.json
-│
-├── database/                       # Database models and seed scripts
-│   ├── models/                     # User, Room, Message, ExecutionRun
-│   ├── seeds/
-│   └── README.md
-│
-├── realtime/                       # Real-time WebSocket layer
-│   ├── server/                     # Socket handlers (rooms, editorSync, presence, chat, typing)
-│   ├── client/                     # Socket client instance & event constants
-│   └── protocol/                   # Socket event specification
-│
-├── execution/                      # Code execution engine & sandboxes
-│   ├── engine/                     # executeCode, executor, queue, resultParser, sandboxConfig
-│   ├── runners/                    # Dockerfiles & runners for python, java, cpp
-│   └── README.md
-│
-├── infrastructure/                 # Deployment & orchestration
-│   ├── docker/
-│   ├── docker-compose.yml
-│   ├── .env.example
-│   └── deployment/
-│
-├── testing/                        # Test suites
-│   ├── backend/
-│   ├── realtime/
-│   ├── execution/
-│   ├── frontend/
-│   └── security/
-│
-├── docs/                           # Architecture, API & security documentation
-│   ├── architecture.md
-│   ├── api-spec.md
-│   ├── socket-events.md
-│   └── security-notes.md
-│
-├── demo/                           # Demo walkthrough and seed data
-│   ├── seed_users.js
-│   ├── seed_rooms.js
-│   └── demo_script.md
-│
-├── eval/                           # Security & load evaluation notes
-│   ├── sandbox_escape_tests.md
-│   └── load_test_notes.md
-│
-├── README.md
-└── CURRENT_STATUS.md
+```powershell
+.\setup.ps1
+.\start.ps1
+.\verify.ps1
+# Additional disposable runner executions:
+.\verify.ps1 -ExecutionSmoke
+# Read-only diagnostics with targeted next steps:
+.\diagnose.ps1
 ```
 
-## Getting Started
+Setup creates `infrastructure/.env` only when absent, using random secrets. Existing configuration is validated and preserved. Missing, empty, duplicate, malformed or placeholder settings fail with key names rather than secret values. JWT secrets must contain at least 32 characters. Generated hex passwords work in the MongoDB/Redis connection URLs. Do not replace existing database credentials without rotating the corresponding database users.
 
-### Prerequisites
-- [Node.js](https://nodejs.org/) v18+
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/)
-- [MongoDB](https://www.mongodb.com/) (local or Atlas)
-- [Redis](https://redis.io/) (local or via Docker)
-- Git
+For a missing or weak **local demo** JWT only, run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -RepairLocalJwtSecret`. This explicitly replaces only that setting with 32 random bytes, preserves other values, and leaves an already valid JWT unchanged. Applying the updated backend configuration invalidates existing sessions. The process-only execution-policy option also works when Windows marks downloaded scripts unsigned; it does not change the machine policy. Use the same `powershell.exe -NoProfile -ExecutionPolicy Bypass -File` prefix for `start.ps1` and `verify.ps1` when needed.
 
-### Installation
+This laptop intentionally keeps its external MongoDB target. If Atlas rejects the current public IP, add only that IP in the existing project's Network Access settings, then rerun diagnostics. Until `/ready` returns `ready`, authentication, rooms and collaboration remain blocked even if the frontend and runners work. See the current assessment at the top of the completion report; do not change database credentials or switch to local MongoDB to hide this failure.
 
-```bash
-# Clone the repository
-git clone https://github.com/IndependentSalt69/AWT_2026.git
-cd AWT_2026
+Startup validates the Linux engine, Compose, files and environment before building. It builds all three runners and the application before starting services, using cached layers. Images are transferred only when their filesystem/configuration differs, and verified inside the isolated daemon before starting the worker. `-SkipBuild` explicitly reuses existing images; it does not validate them against current source. Temporary archives are removed in `finally` blocks; failed remote cleanup is reported.
 
-# Install backend dependencies
-cd backend
-npm install
+Running containers are preserved (`--no-recreate`). After a code/configuration update, diagnostics reports drift. Apply updates only during a maintenance window with explicit service recreation; startup does not restart an active daemon. An inactive MongoDB container left in `created`/`exited` state after a failed port bind can be recreated safely with its existing data volume to apply the selected port.
 
-# Install frontend dependencies
-cd ../frontend
-npm install
+Default endpoints are frontend `http://localhost:3000`, backend liveness `http://127.0.0.1:5000/health`, and backend dependency readiness `http://127.0.0.1:5000/ready`. Readiness checks database and Redis connectivity. Worker health checks Redis, the daemon and all three images. Neither health check proves authenticated execution; use the smoke and application tests too.
+
+## MongoDB port conflicts on Windows
+
+MongoDB is always published on **127.0.0.1**. `MONGO_HOST_PORT=27017` in `infrastructure/.env` sets the preferred host port. Internal connections remain `mongo:27017`; changing the host port must not change that internal URI.
+
+Startup attempts an exclusive TCP loopback bind, which detects occupied ports and Windows access-denied/excluded-port failures. It tries up to 32 ports starting at the preferred port, then 37017–37048, with at most 64 distinct attempts. If this project's MongoDB is already running, its existing loopback mapping wins. Only the selected port entry is atomically saved; unrelated settings are preserved. Duplicate/malformed entries stop selection rather than being silently rewritten.
+
+The scripts temporarily clear Compose interpolation overrides from their process environment, pin the selected Mongo port, then restore the parent values. This prevents a stale `$env:MONGO_HOST_PORT` from overriding `--env-file`. When running Compose manually, clear stale process overrides first and explicitly use `--env-file infrastructure/.env`.
+
+For a failed bind:
+
+```powershell
+.\diagnose.ps1
+netsh interface ipv4 show excludedportrange protocol=tcp
+# Choose another preferred MONGO_HOST_PORT locally if both search ranges are excluded.
+.\start.ps1
 ```
 
-### Environment Variables
+A port can become occupied between the probe and Docker's bind. Retry startup after inspecting the failure. Never stop random services, kill arbitrary processes, delete MongoDB volumes or prune Docker to recover a port. Changing `.env` passwords does not update users already stored in a volume.
 
-Create a `.env` file based on `infrastructure/.env.example`:
+## Trusted testing from another laptop or phone
 
-```env
-PORT=5000
-MONGO_URI=mongodb://localhost:27017/codecollab
-JWT_SECRET=your_jwt_secret
-REDIS_URL=redis://localhost:6379
-CLIENT_URL=http://localhost:3000
-```
+Use only a trusted private Wi-Fi network and trusted submitted code. Public tunnels and public untrusted execution are outside this local profile's safety boundary.
 
-### Running Locally
+1. Find the host laptop's active Wi-Fi IPv4 address with `Get-NetIPConfiguration`. Avoid VPN, Docker/WSL and disconnected adapters.
+2. In `infrastructure/.env`, set `FRONTEND_BIND_ADDRESS` to that specific LAN address. Add `http://<LAN-IP>:3000` to `CLIENT_URL`, keeping `http://localhost:3000` in the comma-separated origin list if needed. The normal default remains loopback. While bound specifically to the LAN address, use that address on the host laptop too; restore `127.0.0.1` to return to localhost binding.
+3. Rebuild frontend/backend and explicitly recreate only those services during a maintenance window. Do not recreate the execution daemon for a LAN change. MongoDB, Redis and backend remain loopback; the execution API remains on its private internal network.
+4. If Windows Firewall blocks TCP 3000, the operator may allow that application/port on the **Private** profile scoped to the local subnet. The scripts do not add firewall rules. Never expose ports 2375, 27017 or 6379 to the LAN.
+5. On the second device, open `http://<LAN-IP>:3000`. Create separate test users, join the same room, check editor/chat changes, switch drivers, and run Python/C++/Java. Verify results arrive only in the intended room and viewers/non-members cannot execute.
+6. In browser network tools confirm `/api/*` and `/socket.io/*` use the host laptop's address, not the client's localhost. Confirm a WebSocket 101 handshake or working polling, and no CORS failures. Test from a second room to check result isolation.
 
-```bash
-# Start backend
-cd backend
-npm run dev
+The frontend uses same-origin API and realtime URLs through Nginx (Compose) or Vite's dev proxy. Optional `VITE_API_URL` and `VITE_REALTIME_URL` are **build-time** overrides for separate deployments; runtime Compose environment cannot change an already-built JavaScript bundle. Both HTTP and realtime use the same explicit backend origin allowlist. A real device-to-device test remains required; local proxy tests are not a substitute.
 
-# Start frontend (in a separate terminal)
-cd frontend
-npm run dev
-```
+## Tests
 
-Or, using Docker Compose from the infrastructure directory:
+Install workspace dependencies with `npm ci` from the root. Use a disposable Redis and explicit `REDIS_URL`; several suites clear their test queues. Never point tests at shared application Redis or a real database. The completion report records the isolated services used for this run.
 
-```bash
-docker-compose -f infrastructure/docker-compose.yml up --build
-```
-
-Visit `http://localhost:3000` to use the app.
-
----
-
-## Running Tests
-
-```bash
-# Run all standard automated test suites (21 passing suites, 278 passing tests, 3 skipped)
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File testing/infrastructure/dev_workflow.tests.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File testing/infrastructure/startup_failures.tests.ps1
 npm test
-
-# Run opt-in live MongoDB integration tests against local disposable instance (1 suite, 3 tests)
-npm run test:integration:mongo
-
-# Run frontend production build check
+npm run test:execution
 npm run build
+# Only with MONGO_TEST_URI pointing at a disposable local MongoDB:
+npm run test:integration:mongo
 ```
 
----
+Infrastructure tests cover actual loopback binds, synthetic excluded-port results, bounded exhaustion, environment preservation, Compose interpolation, startup failure ordering and archive cleanup. Jest combines unit/mocked checks with live Docker/Redis suites. The MongoDB suite is opt-in and uses a disposable database. `testing/infrastructure/application.smoke.js` is a separate live authenticated test guarded to use the exact disposable fixture containers described in the report.
 
-## Security Notes
+## Execution and production security
 
-Each code submission runs in a fresh, isolated Docker container with:
-- No network access (`--network none`)
-- CPU and memory limits
-- Execution timeout enforcement
-- No access to the host filesystem beyond a temporary code file
+Supported sources are Python, C++17 and Java 17 (`public class Main`, default package). Compilation and execution share the timeout. The executor bounds source/output, uses argument arrays, removes containers, and enforces a read-only root filesystem, non-root user, dropped capabilities, no-new-privileges and no network. C++ alone gets an executable scratch mount for its compiled binary. Java compilation disables annotation processors and bounds the JVM.
 
-See [`docs/security-notes.md`](./docs/security-notes.md) for full sandbox hardening details.
+The local rootless DinD profile retains its outer 1 CPU / 512 MiB / 128-PID limits. `init: true` reaps orphaned daemon helpers. Existing deployments require an explicit drained maintenance recreation to adopt it; never raise limits or restart a shared daemon automatically. Diagnostics reports PID/memory controller events and zombie/helper counts. Working local execution does not prove per-runner kernel enforcement.
 
----
+Production/staging/unknown execution modes reject host-daemon fallback and require `runsc`, a native Linux rootless Docker daemon under systemd, cgroup v2 and advertised CPU/memory/PID support. Development cgroup exceptions cannot disable production checks. These are necessary startup checks, not security qualification: live CPU throttling, memory OOM, PID limits, gVisor workload identity, timeouts, output limits, cleanup and authenticated room isolation must all be demonstrated on the actual target.
 
-## Roadmap
+```sh
+# On the intended native Linux target, after provisioning the dedicated rootless daemon:
+NODE_ENV=production CONTAINER_RUNTIME=runsc DOCKER_HOST=unix:///run/user/<execution-uid>/docker.sock \
+  npm run eval:enforcement -- --strict --prod-pid
+```
 
-- [ ] Auth & session handling
-- [ ] Room creation & join-by-link
-- [ ] Real-time chat with typing indicators
-- [ ] Live shared code editor
-- [ ] Multi-language sandboxed execution (Python, Java, C++)
-- [ ] Execution history per room/user
-- [ ] Cloud deployment
-
----
-
-## License
-
-This project is for academic purposes as part of a semester-scale full-stack development project.
-
----
+The resource harness does not create all application-path evidence and cannot independently certify a release. Windows/Docker Desktop and WSL are not accepted production targets. Deployment remains blocked until the native target and its full evidence are available.

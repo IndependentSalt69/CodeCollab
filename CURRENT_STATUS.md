@@ -1,3 +1,7 @@
+# Current assessment
+
+See [docs/CODEX_COMPLETION_REPORT.md](docs/CODEX_COMPLETION_REPORT.md) for current implementation, test results and release blockers. The milestone snapshot below is historical.
+
 # CodeCollab M0.8 — Room Management & Database Persistence Status Report
 
 **Date:** October 10, 2026  

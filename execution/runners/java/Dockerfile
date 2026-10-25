@@ -1,5 +1,6 @@
 FROM eclipse-temurin:17-jdk-jammy
-RUN apt-get update && apt-get install -y --no-install-recommends python3 \
+RUN sed -i 's|http://archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g; s|http://security.ubuntu.com/ubuntu|https://security.ubuntu.com/ubuntu|g; s|http://ports.ubuntu.com/ubuntu-ports|https://ports.ubuntu.com/ubuntu-ports|g' /etc/apt/sources.list \
+    && apt-get update && apt-get install -y --no-install-recommends python3 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -g 1000 sandbox && useradd -u 1000 -g sandbox -M sandbox
 WORKDIR /app
