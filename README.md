@@ -20,47 +20,33 @@ Install Docker Desktop with Linux containers, PowerShell 5.1 or newer, and Node.
 
 Setup creates `infrastructure/.env` only when absent, using random secrets. Existing configuration is validated and preserved. Missing, empty, duplicate, malformed or placeholder settings fail with key names rather than secret values. JWT secrets must contain at least 32 characters. Generated hex passwords work in the MongoDB/Redis connection URLs. Do not replace existing database credentials without rotating the corresponding database users.
 
-For a missing or weak **local demo** JWT only, run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -RepairLocalJwtSecret`. This explicitly replaces only that setting with 32 random bytes, preserves other values, and leaves an already valid JWT unchanged. Applying the updated backend configuration invalidates existing sessions. The process-only execution-policy option also works when Windows marks downloaded scripts unsigned; it does not change the machine policy. Use the same `powershell.exe -NoProfile -ExecutionPolicy Bypass -File` prefix for `start.ps1` and `verify.ps1` when needed.
+### Prerequisites
+- Windows PowerShell
+- Docker Desktop configured for Linux containers
+- Internet access for initial image pulls and builds
+- Git, if you need to clone or update the repository
+- Node.js 18+ only for host-based development commands and tests
 
-This laptop intentionally keeps its external MongoDB target. If Atlas rejects the current public IP, add only that IP in the existing project's Network Access settings, then rerun diagnostics. Until `/ready` returns `ready`, authentication, rooms and collaboration remain blocked even if the frontend and runners work. See the current assessment at the top of the completion report; do not change database credentials or switch to local MongoDB to hide this failure.
+MongoDB and Redis are started by Docker Compose; they do not need to be installed separately for this workflow.
 
-Startup validates the Linux engine, Compose, files and environment before building. It builds all three runners and the application before starting services, using cached layers. Images are transferred only when their filesystem/configuration differs, and verified inside the isolated daemon before starting the worker. `-SkipBuild` explicitly reuses existing images; it does not validate them against current source. Temporary archives are removed in `finally` blocks; failed remote cleanup is reported.
+### First-Time Setup and Startup (Windows / PowerShell)
 
-Running containers are preserved (`--no-recreate`). After a code/configuration update, diagnostics reports drift. Apply updates only during a maintenance window with explicit service recreation; startup does not restart an active daemon. An inactive MongoDB container left in `created`/`exited` state after a failed port bind can be recreated safely with its existing data volume to apply the selected port.
+Open PowerShell in the repository root (`AWT_2026`) and run these commands in order: `.\setup.ps1`, `.\start.ps1`, then `.\verify.ps1`.
 
-Default endpoints are frontend `http://localhost:3000`, backend liveness `http://127.0.0.1:5000/health`, and backend dependency readiness `http://127.0.0.1:5000/ready`. Readiness checks database and Redis connectivity. Worker health checks Redis, the daemon and all three images. Neither health check proves authenticated execution; use the smoke and application tests too.
+- **`setup.ps1`** creates `infrastructure\.env` with unique local secrets if the file is missing. It preserves an existing file. Keep the file private and never commit it.
+- **`start.ps1`** builds the application and Python, C++, and Java runner images before changing the running stack. It transfers the runner images to the isolated execution daemon, verifies them, and starts the execution worker.
+- **`verify.ps1`** checks all six Compose services, the frontend and backend HTTP endpoints, and all three runner images inside the execution daemon. It is read-only and does not start, stop, or rebuild services.
 
-## MongoDB port conflicts on Windows
+Open **http://localhost:3000** on the same laptop. The backend health endpoint is **http://localhost:5000/health**.
 
-MongoDB is always published on **127.0.0.1**. `MONGO_HOST_PORT=27017` in `infrastructure/.env` sets the preferred host port. Internal connections remain `mongo:27017`; changing the host port must not change that internal URI.
+If startup fails, read the first reported error before retrying. Check that Docker Desktop is running and configured for Linux containers. Initial builds require network access to image registries and package repositories.
 
-Startup attempts an exclusive TCP loopback bind, which detects occupied ports and Windows access-denied/excluded-port failures. It tries up to 32 ports starting at the preferred port, then 37017–37048, with at most 64 distinct attempts. If this project's MongoDB is already running, its existing loopback mapping wins. Only the selected port entry is atomically saved; unrelated settings are preserved. Duplicate/malformed entries stop selection rather than being silently rewritten.
+### Local Development and Multi-Device Testing
 
-The scripts temporarily clear Compose interpolation overrides from their process environment, pin the selected Mongo port, then restore the parent values. This prevents a stale `$env:MONGO_HOST_PORT` from overriding `--env-file`. When running Compose manually, clear stale process overrides first and explicitly use `--env-file infrastructure/.env`.
+This Docker Desktop configuration is for trusted local development. It warns that inner cgroup enforcement is not production-qualified; passing local health checks does not prove production sandbox security.
 
-For a failed bind:
-
-```powershell
-.\diagnose.ps1
-netsh interface ipv4 show excludedportrange protocol=tcp
-# Choose another preferred MONGO_HOST_PORT locally if both search ranges are excluded.
-.\start.ps1
-```
-
-A port can become occupied between the probe and Docker's bind. Retry startup after inspecting the failure. Never stop random services, kill arbitrary processes, delete MongoDB volumes or prune Docker to recover a port. Changing `.env` passwords does not update users already stored in a volume.
-
-## Trusted testing from another laptop or phone
-
-Use only a trusted private Wi-Fi network and trusted submitted code. Public tunnels and public untrusted execution are outside this local profile's safety boundary.
-
-1. Find the host laptop's active Wi-Fi IPv4 address with `Get-NetIPConfiguration`. Avoid VPN, Docker/WSL and disconnected adapters.
-2. In `infrastructure/.env`, set `FRONTEND_BIND_ADDRESS` to that specific LAN address. Add `http://<LAN-IP>:3000` to `CLIENT_URL`, keeping `http://localhost:3000` in the comma-separated origin list if needed. The normal default remains loopback. While bound specifically to the LAN address, use that address on the host laptop too; restore `127.0.0.1` to return to localhost binding.
-3. Rebuild frontend/backend and explicitly recreate only those services during a maintenance window. Do not recreate the execution daemon for a LAN change. MongoDB, Redis and backend remain loopback; the execution API remains on its private internal network.
-4. If Windows Firewall blocks TCP 3000, the operator may allow that application/port on the **Private** profile scoped to the local subnet. The scripts do not add firewall rules. Never expose ports 2375, 27017 or 6379 to the LAN.
-5. On the second device, open `http://<LAN-IP>:3000`. Create separate test users, join the same room, check editor/chat changes, switch drivers, and run Python/C++/Java. Verify results arrive only in the intended room and viewers/non-members cannot execute.
-6. In browser network tools confirm `/api/*` and `/socket.io/*` use the host laptop's address, not the client's localhost. Confirm a WebSocket 101 handshake or working polling, and no CORS failures. Test from a second room to check result isolation.
-
-The frontend uses same-origin API and realtime URLs through Nginx (Compose) or Vite's dev proxy. Optional `VITE_API_URL` and `VITE_REALTIME_URL` are **build-time** overrides for separate deployments; runtime Compose environment cannot change an already-built JavaScript bundle. Both HTTP and realtime use the same explicit backend origin allowlist. A real device-to-device test remains required; local proxy tests are not a substitute.
+Do not expose this development stack to the public internet. On another device, `localhost` refers to that device, not the CodeCollab laptop. LAN access may require configuring the frontend API and realtime URLs, along with the backend's allowed client origin. Keep the execution daemon API (ports 2375/2376), MongoDB, and Redis private; do not expose them to the LAN.
+## Running Tests
 
 ## Tests
 
