@@ -1,5 +1,5 @@
 const Docker = require('dockerode');
-const { PassThrough } = require('stream');
+
 const sandboxConfig = require('./sandboxConfig');
 const { parseMemoryToBytes, parseCpuToNanoCPUs } = require('./resourceLimits');
 
@@ -111,6 +111,7 @@ async function runInSandbox({
   language,
   code,
   stdin,
+  io,
   timeout = sandboxConfig.DEFAULT_TIMEOUT_MS,
   memory = sandboxConfig.DEFAULT_MEMORY,
   cpu = sandboxConfig.cpu,
@@ -172,292 +173,29 @@ async function runInSandbox({
     : sandboxConfig.DEFAULT_TIMEOUT_MS;
   const timeoutMs = Math.min(rawTimeout, sandboxConfig.MAX_TIMEOUT_MS);
 
-  let container = null;
-  const startTime = Date.now();
-  let timedOut = false;
-  let timer = null;
-  let outputMonitor = null;
-  let stdinSocket = null;
-
-  try {
-    // 1. Create ephemeral container with resource limits, read-only rootfs & isolation
-    const containerOpts = {
-      Image: imageName,
-      Cmd: ['--code', code],
-      AttachStdout: true,
-      AttachStderr: true,
-      Tty: false,
-      User: 'sandbox',
-      Labels: { 'codecollab.runner': normalizedLang },
-      HostConfig: {
-        Memory: memoryBytes,
-        MemorySwap: memoryBytes,
-        NanoCPUs: nanoCPUs,
-        NetworkMode: network ? 'bridge' : 'none',
-        PidsLimit: 64,
-        ReadonlyRootfs: true,
-        CapDrop: ['ALL'],
-        SecurityOpt: ['no-new-privileges:true'],
-        Tmpfs: {
-          '/tmp': 'rw,noexec,nosuid,size=32m',
-          // Native binaries need one executable scratch mount. /tmp stays noexec.
-          ...(normalizedLang !== 'python' ? {
-            '/work': `rw,${normalizedLang === 'cpp' ? 'exec' : 'noexec'},nosuid,nodev,size=32m,uid=1000,gid=1000,mode=700`,
-          } : {}),
-        },
-        ...(selectedRuntime === 'runsc' ? { Runtime: 'runsc' } : {}),
+  const containerOpts = {
+    Image: imageName, Cmd: ['--code', code], AttachStdout: true, AttachStderr: true,
+    Tty: false, User: 'sandbox', Labels: { 'codecollab.runner': normalizedLang },
+    ...(hasStdin || io ? { AttachStdin: true, OpenStdin: true, StdinOnce: true } : {}),
+    ...(io ? { Env: [`CODECOLLAB_TIMEOUT_MS=${timeoutMs}`] } : {}),
+    HostConfig: {
+      Memory: memoryBytes, MemorySwap: memoryBytes, NanoCPUs: nanoCPUs,
+      NetworkMode: network ? 'bridge' : 'none', PidsLimit: 64, ReadonlyRootfs: true,
+      CapDrop: ['ALL'], SecurityOpt: ['no-new-privileges:true'],
+      ...(io ? { AutoRemove: true } : {}),
+      Tmpfs: {
+        '/tmp': 'rw,noexec,nosuid,size=32m',
+        ...(normalizedLang !== 'python' ? {
+          '/work': `rw,${normalizedLang === 'cpp' ? 'exec' : 'noexec'},nosuid,nodev,size=32m,uid=1000,gid=1000,mode=700`,
+        } : {}),
       },
-    };
-
-    if (hasStdin) {
-      containerOpts.AttachStdin = true;
-      containerOpts.OpenStdin = true;
-      containerOpts.StdinOnce = true;
-    }
-
-    container = await docker.createContainer(containerOpts);
-
-    // 2. Attach multiplexed streams before starting
-    let stream = null;
-    if (hasStdin) {
-      stdinSocket = await new Promise((resolve, reject) => {
-        const optsf = {
-          path: `/containers/${container.id}/attach?stream=1&stdin=1&stdout=1&stderr=1`,
-          method: 'POST',
-          isStream: true,
-          hijack: true,
-          openStdin: false,
-          file: Buffer.from(''),
-          statusCodes: { 200: true, 404: 'no such container', 500: 'server error' },
-        };
-        docker.modem.dial(optsf, (err, sock) => {
-          if (err) return reject(err);
-          resolve(sock);
-        });
-      });
-      stream = stdinSocket;
-    } else {
-      stream = await container.attach({
-        stream: true,
-        stdout: true,
-        stderr: true,
-      });
-    }
-
-    const stdoutStream = new PassThrough();
-    const stderrStream = new PassThrough();
-
-    const MAX_OUTPUT = sandboxConfig.MAX_OUTPUT_BUFFER_BYTES;
-    let stdoutBytes = 0;
-    let stderrBytes = 0;
-    let stdoutBuffer = '';
-    let stderrBuffer = '';
-    let outputLimitExceeded = false;
-    let limitExceededReason = '';
-
-    stdoutStream.on('data', (chunk) => {
-      if (outputLimitExceeded) return;
-      const chunkBytes = Buffer.byteLength(chunk);
-      if (stdoutBytes + chunkBytes > MAX_OUTPUT) {
-        outputLimitExceeded = true;
-        limitExceededReason = 'stdout exceeded maximum limit of 64KB';
-        const remaining = Math.max(0, MAX_OUTPUT - stdoutBytes);
-        if (remaining > 0) {
-          stdoutBuffer += chunk.slice(0, remaining).toString('utf8');
-          stdoutBytes += remaining;
-        }
-        stdoutBuffer += '\n[Output truncated: exceeded 64KB limit]';
-        if (container) {
-          container.kill().catch(() => {});
-        }
-        return;
-      }
-      stdoutBytes += chunkBytes;
-      stdoutBuffer += chunk.toString('utf8');
-    });
-
-    stderrStream.on('data', (chunk) => {
-      if (outputLimitExceeded) return;
-      const chunkBytes = Buffer.byteLength(chunk);
-      if (stderrBytes + chunkBytes > MAX_OUTPUT) {
-        outputLimitExceeded = true;
-        limitExceededReason = 'stderr exceeded maximum limit of 64KB';
-        const remaining = Math.max(0, MAX_OUTPUT - stderrBytes);
-        if (remaining > 0) {
-          stderrBuffer += chunk.slice(0, remaining).toString('utf8');
-          stderrBytes += remaining;
-        }
-        stderrBuffer += '\n[Output truncated: exceeded 64KB limit]';
-        if (container) {
-          container.kill().catch(() => {});
-        }
-        return;
-      }
-      stderrBytes += chunkBytes;
-      stderrBuffer += chunk.toString('utf8');
-    });
-
-    docker.modem.demuxStream(stream, stdoutStream, stderrStream);
-
-    // 3. Start container
-    await container.start();
-
-    // 4. Send stdin and close stream so container receives EOF
-    if (hasStdin && stdinSocket) {
-      if (stdin.length > 0) {
-        stdinSocket.write(stdin);
-      }
-      stdinSocket.end();
-    }
-
-    // Monitor output limits actively for stdin-attached runs
-    if (hasStdin) {
-      outputMonitor = setInterval(async () => {
-        try {
-          if (!container || outputLimitExceeded || timedOut) return;
-          const logs = await container.logs({ stdout: true, stderr: true });
-          if (logs.length > MAX_OUTPUT) {
-            outputLimitExceeded = true;
-            limitExceededReason = 'output exceeded maximum limit of 64KB';
-            clearInterval(outputMonitor);
-            await container.kill().catch(() => {});
-          }
-        } catch (_) {}
-      }, 100);
-    }
-
-    // 5. Set timeout enforcement
-    const timeoutPromise = new Promise((resolve) => {
-      timer = setTimeout(async () => {
-        timedOut = true;
-        try {
-          await container.kill();
-        } catch (_) {
-          // Container may have already exited
-        }
-        resolve({ timedOut: true });
-      }, timeoutMs);
-    });
-
-    // 6. Wait for container completion or timeout
-    const waitPromise = container.wait().then((data) => ({ timedOut: false, data }));
-
-    const outcome = await Promise.race([waitPromise, timeoutPromise]);
-
-    if (timer) {
-      clearTimeout(timer);
-      timer = null;
-    }
-    if (outputMonitor) {
-      clearInterval(outputMonitor);
-      outputMonitor = null;
-    }
-
-    // Allow stream chunks to finish flushing
-    await new Promise((resolve) => setTimeout(resolve, 50));
-
-    // For runs with stdin, retrieve full output from container log buffer to capture any trailing output
-    if (hasStdin && container) {
-      try {
-        const logBuffer = await container.logs({ stdout: true, stderr: true });
-        const demuxed = demuxBuffer(logBuffer, MAX_OUTPUT);
-        if (demuxed.outputLimitExceeded) {
-          outputLimitExceeded = true;
-          limitExceededReason = demuxed.limitExceededReason;
-        }
-        stdoutBuffer = demuxed.stdout;
-        stderrBuffer = demuxed.stderr;
-      } catch (_) {}
-    }
-
-    const executionTimeMs = Date.now() - startTime;
-
-    // Output limit termination takes precedence over timeout
-    if (outputLimitExceeded) {
-      return {
-        language: normalizedLang,
-        stdout: stdoutBuffer,
-        stderr: stderrBuffer + (stderrBuffer ? '\n' : '') + `Execution failed: ${limitExceededReason}`,
-        exitCode: 137,
-        executionTimeMs,
-        timedOut: false,
-        outputLimitExceeded: true,
-        status: 'failed',
-        limits: {
-          timeout: timeoutMs,
-          memory: memoryBytes,
-          cpu: nanoCPUs,
-          network,
-          maxOutputBytes: MAX_OUTPUT,
-          runtime: selectedRuntime,
-        },
-      };
-    }
-
-    if (timedOut || outcome.timedOut) {
-      return {
-        language: normalizedLang,
-        stdout: stdoutBuffer,
-        stderr: stderrBuffer + (stderrBuffer ? '\n' : '') + `Execution timed out after ${timeoutMs}ms`,
-        exitCode: 124,
-        executionTimeMs,
-        timedOut: true,
-        status: 'timeout',
-        limits: {
-          timeout: timeoutMs,
-          memory: memoryBytes,
-          cpu: nanoCPUs,
-          network,
-          maxOutputBytes: MAX_OUTPUT,
-          runtime: selectedRuntime,
-        },
-      };
-    }
-
-    const exitCode = outcome.data && typeof outcome.data.StatusCode === 'number' ? outcome.data.StatusCode : 0;
-
-    return {
-      language: normalizedLang,
-      stdout: stdoutBuffer,
-      stderr: stderrBuffer,
-      exitCode,
-      executionTimeMs,
-      timedOut: false,
-      status: exitCode === 0 ? 'completed' : 'failed',
-      limits: {
-        timeout: timeoutMs,
-        memory: memoryBytes,
-        cpu: nanoCPUs,
-        network,
-        maxOutputBytes: MAX_OUTPUT,
-        runtime: selectedRuntime,
-      },
-    };
-  } finally {
-    if (timer) {
-      clearTimeout(timer);
-    }
-    if (outputMonitor) {
-      clearInterval(outputMonitor);
-    }
-    if (stdinSocket) {
-      try {
-        stdinSocket.destroy();
-      } catch (_) {}
-    }
-    // 7. Force remove container to guarantee ephemeral cleanup
-    if (container) {
-      try {
-        await container.remove({ force: true });
-      } catch (err) {
-        if (err.statusCode !== 404) {
-          throw new Error(`Sandbox cleanup failed: ${err.message}`);
-        }
-      }
-    }
-  }
+      ...(selectedRuntime === 'runsc' ? { Runtime: selectedRuntime } : {}),
+    },
+  };
+  const result = await require('./containerIO')(docker, containerOpts, stdin, io, timeoutMs);
+  return { ...result, language: normalizedLang, limits: { timeout: timeoutMs, memory: memoryBytes,
+    cpu: nanoCPUs, network, maxOutputBytes: sandboxConfig.MAX_OUTPUT_BUFFER_BYTES, runtime: selectedRuntime } };
 }
-
 module.exports = {
   runInSandbox,
   getDockerClient,

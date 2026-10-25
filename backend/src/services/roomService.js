@@ -135,6 +135,11 @@ async function createRoom({ name, language, isPrivate }, userId) {
   }
 
   const supportedLanguages = ['python', 'java', 'cpp'];
+  if (language !== undefined && (typeof language !== 'string' || !supportedLanguages.includes(language.toLowerCase()))) {
+    const error = new Error('Unsupported room language; use python, cpp or java');
+    error.status = 400;
+    throw error;
+  }
   const effectiveLanguage = language && supportedLanguages.includes(language.toLowerCase())
     ? language.toLowerCase()
     : 'python';

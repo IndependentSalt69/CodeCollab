@@ -1,4 +1,201 @@
-# CodeCollab Completion Report: Standard Input (stdin) Implementation for Python, C++, and Java — 2026-10-25
+# Current completion report: live interactive terminal — 2026-10-25
+
+## Executive summary
+
+**Trusted laptop demo: verified with live browser input for Python 3.11, C++ (GCC 13) and Java 17. Production: NOT_QUALIFIED_FOR_PRODUCTION.** Run Code now keeps program stdin open and streams stdout/stderr while the program runs. Separate responses reach the same process after each prompt. EOF, actual cancellation, total deadlines, output limits and cleanup are implemented. Optional initial input remains available. JavaScript is no longer offered or accepted as an execution language.
+
+Final full regression result: **551 passed, 3 skipped opt-in MongoDB tests, 0 failures; 34 passed suites and 1 skipped suite**. Frontend TypeScript/Vite build and all required Docker builds passed. All six Compose services are healthy, `/ready` reports database/Redis ready, and the actual authenticated browser completed Python/C++/Java prompt-by-prompt exchanges. EOF, Clear, Stop and timeout were also observed in that browser. Final application checks found **0 active/waiting/delayed jobs, 0 terminal Redis keys, and 0 runner containers** in the isolated daemon.
+
+Remaining limits: a 10-second total execution budget, no PTY/shell/job control, no resume after disconnect, single-backend in-memory session ownership, and BullMQ stalled-job recovery requiring an available worker. A real second-device test and native Linux/gVisor security qualification remain unperformed. Diagnostics report historical memory-controller limit hits, with no OOM kills or PID-limit hits observed. No resource limits were raised.
+
+## Repository baseline and Git handoff
+
+- Actual initial branch: `feature/execution-stdin`; starting and ending commit: `56843c707c7417138ce6005f296fdd858f628ba0`.
+- Initial working tree and index were clean. Contrary to the request's older description, stdin work was already committed; it was preserved as the baseline.
+- Created and used `feature/interactive-terminal` from that checkout. No existing branch of that name was overwritten.
+- Local `main` and the existing `origin/main` reference both point to `2e522446cc3c9a3916e64bc01ee95766b9f8bf04`; `main...origin/main` is `0 0`. Current HEAD is 3 commits ahead and 0 behind that existing remote-tracking reference. No fetch was performed, so this is not a claim about the current live remote.
+- Final state: **23 modified tracked files and 11 new untracked files**, all unstaged and uncommitted. The index remains empty. No staging, commits, pushes, merges, rebases, resets, branch deletion, PR creation, or teammate-branch edits occurred in this interactive-terminal task. Earlier Git operations recorded elsewhere belong to earlier authorized tasks.
+- Existing root/infrastructure environment files, credentials, database target, data and Docker volumes were preserved. The user signed into the existing browser account and opened a room for testing. No account/room/database records were created, deleted or changed by this task's tests. Interactive runs do not create execution-history records; editor changes are live room state.
+
+## Architecture, behavior and security
+
+The browser sends authenticated Socket.IO `terminal:start/input/eof/cancel` requests to the existing backend. A cryptographically random server UUID binds each session to the initiating connected socket, authenticated user and database room. Every action rechecks current membership, verified room join, token expiry and active-driver authorization. A client-supplied identity/container ID is never accepted as authorization. Output delivery rechecks current database membership and token validity before sending to individual room sockets. The initiating client must still be driver to control a run; driver transfer does not transfer ownership.
+
+The backend enqueues on the existing BullMQ queue. The separate worker invokes the existing `executeCode` and Docker sandbox, with bounded Redis Streams carrying ordered input/output. This avoids subscription timing races without adding a second executor or exposing Docker to the backend/browser. A 3-second backend lease cancels a worker after loss of its owner; temporary keys have 45-second TTLs. Acknowledged input uses monotonic sequence numbers. Socket commands are serialized and rate limited; session capacity, input bytes/messages, output chunks/events and socket write buffers are bounded. The frontend rejects unrelated/stale runs and preserves stderr styling.
+
+Docker uses one persistent hijacked stdin attachment and a separate non-TTY output attachment. Incremental framing and UTF-8 decoding preserve partial frames and channels; awaiting the output sink applies backpressure. EOF half-closes only input, so trailing output survives. Stop kills the real sandbox. Final events are emitted after executor cleanup; transient AutoRemove/remove races receive a bounded retry. Optional initial input shares the 64 KiB cumulative stdin limit. Compilation, runtime and input waiting share the existing deadline (UI: 10 seconds). No idle timeout extends that budget.
+
+Existing source/output caps, read-only root, sandbox user, no-new-privileges, dropped capabilities, network isolation, CPU/memory/PID requests and production fail-closed policy remain. Compiled-language launchers retain compiler/runtime separation and descendant process-group cleanup. Runner-side deadlines plus AutoRemove provide an availability fallback for ordinary programs after abrupt worker death; this fallback is not a separately qualified security boundary against malicious code.
+
+Interactive source/initial input exists transiently in the BullMQ payload; live input exists transiently in its capped Redis stream. This feature does not log source, stdin, credentials or tokens, or persist interactive execution history to MongoDB. Cleanup removes the session map and streams, and jobs auto-remove on completion/failure. After abrupt worker death, the locked BullMQ job can remain until a replacement worker performs ordinary lock/stall recovery; the expired lease prevents replaying the submitted program. No forced unlock is used.
+
+Detailed usage, bounds, event payloads and recovery: [INTERACTIVE_TERMINAL.md](INTERACTIVE_TERMINAL.md).
+
+## Issues investigated and resolved
+
+| Issue | Actual finding and resolution |
+|---|---|
+| Preloaded-only stdin | Existing stdin was committed and worked, but EOF was sent immediately. The common executor now supports persistent interactive stdin while preserving batch behavior. |
+| EOF lost trailing output | Separate Docker read/input attachments keep stdout/stderr alive after stdin closes. Live tests and browser EOF verify this. |
+| AutoRemove cleanup race | The first manual probe failed with Docker 409 during removal. Bounded 409 retries and 404-as-already-removed handling fixed it; live cleanup checks pass. |
+| Startup/session races | Streams preserve startup output; input requires running readiness. Admission is checked again after asynchronous authorization/connection setup. Input reserves stream capacity for EOF/Stop. |
+| Worker crash | Intentionally killed only a test-created child worker. Its sandbox disappeared, the backend mapping expired, and a replacement worker removed the stalled job without executing code again. |
+| Existing result contract regression | First full run found missing `timedOut:false` and output-limit diagnostic fields. Restored the contract; original assertions pass. |
+| Realtime model initialization | Loading the new session module inside server initialization compiled a model after tests mocked DB readiness. Load at module initialization instead; realtime suites pass without weakening authorization. |
+| Obsolete test fixtures/mocks | Existing editor tests used JavaScript as a valid language; changed those fixtures to Python, retaining assertions and adding unsupported-language rejection. Docker mocks now supply real Node Readable streams. |
+| Nginx 502 after backend replacement | Direct `/ready` returned 200 while proxied `/ready` returned 502: Nginx cached the old backend IP. Added Docker DNS resolution with a 10-second cache and variable upstream. Rebuilt frontend; proxied readiness and authenticated browser traffic then worked. Syntax and live proxy tests passed; a second forced backend replacement was not performed after the fix. |
+| Windows MongoDB bind / package repositories | Previously implemented configurable loopback MongoDB ports and HTTPS package repositories were preserved. No port/environment edits were needed. All runner builds passed in this task. |
+| Resource pressure | Final verifier observed `pids.events max 0`, `memory.events max 9270`, `oom 0`, `oom_kill 0`; the memory-limit counter was unchanged between two verifier runs. No zombie processes appeared in their process summaries. These samples do not prove absence of all leaks. No limits, services or volumes were changed to suppress warnings. |
+
+## Every changed file
+
+All paths below are intended task changes; the final Git inventory is the source of truth. Verification is actual, not inferred from the file's existence.
+
+| Path | Change and purpose | Verification |
+|---|---|---|
+| `README.md` | Live-input workflow, three-language set, limits and guide link | Documentation reviewed |
+| `backend/src/services/interactiveSessions.js` (new) | Authenticated session ownership, queue admission, Redis transport, output routing and cleanup | Separate-process transport/security tests; actual browser |
+| `backend/src/services/roomService.js` | Reject explicit unsupported room language | Full backend suite |
+| `docs/INTERACTIVE_TERMINAL.md` (new) | Protocol, lifecycle, bounds, recovery and limitations | Matched to code/tests |
+| `docs/CODEX_COMPLETION_REPORT.md` | Current results above retained historical stdin report | Git/test/output review |
+| `execution/README.md` | Distinguish current interactive route from retained HTTP batch route | Documentation reviewed |
+| `execution/engine/containerIO.js` (new) | Shared streaming lifecycle, EOF, cancellation, bounds and removal | Live Python/C++/Java, batch regression, crash test |
+| `execution/engine/streamIO.js` (new) | Incremental Docker demultiplexing, UTF-8, backpressure/output caps | Framing/flood unit tests and live tests |
+| `execution/engine/sessionProtocol.js` (new) | Bounded Redis connection/streams/lease primitives | Real Redis transport tests |
+| `execution/engine/executeCode.js` | Pass interactive I/O into common executor | Full execution suite |
+| `execution/engine/executor.js` | Restricted container options plus shared streaming lifecycle | Live execution and security suites |
+| `execution/engine/queue.js` | Preserve server session ID in queued payload | Queue and separate-worker tests |
+| `execution/engine/resultParser.js` | Preserve cancelled status | Live cancellation and full suite |
+| `execution/runners/compiled_runner.py` | Deadline fallback across compile/runtime | GCC/Java image builds, live timeout/cleanup tests |
+| `execution/runners/python/runner.py` | Runner-side deadline fallback | Python image build, live timeout/crash tests |
+| `execution/worker/index.js` | Route session jobs through interactive wrapper | Real separate worker and worker regressions |
+| `execution/worker/interactive.js` (new) | Input pump, output publication, lease abort and finalization | Real Redis/Docker/worker process tests |
+| `frontend/nginx.conf` | Refresh backend DNS after container replacement | Image build, `nginx -t`, live proxy/browser |
+| `frontend/src/App.tsx` | Primary interactive flow, session isolation, live controls, driver ownership | TypeScript build and authenticated browser |
+| `frontend/src/services/interactiveTerminal.ts` (new) | Bounded event reducer and acknowledged command transport | React/reducer tests and browser |
+| `frontend/src/components/terminal/Terminal.tsx` | Streamed output, input/EOF/Stop/Clear, lifecycle states | Mounted React tests and browser |
+| `frontend/src/pages/Dashboard/DashboardPage.tsx` | Remove JavaScript execution option | Rendered selector test and browser |
+| `frontend/src/types/execution.ts` | Session/event metadata and starting/cancelled states | TypeScript build |
+| `realtime/protocol/socket-events.md` | Link terminal contract; retain batch event contract | Documentation reviewed |
+| `realtime/server/index.js` | Register sessions and bound socket payloads | Realtime/security tests and browser |
+| `realtime/server/editorSync.js` | Restrict language to python/cpp/java | Real socket editor tests |
+| `testing/execution/interactive_execution.test.js` (new) | 21 live language cases and container-removal assertions | PASS |
+| `testing/execution/stream_io.test.js` (new) | 5 framing/UTF-8/flood/backpressure checks | PASS |
+| `testing/integration/interactive_transport.test.js` (new) | 11 real Redis/separate-worker/Docker cases, with DB/socket fixtures | PASS |
+| `testing/frontend/interactive_terminal.test.js` (new) | 4 mounted component/reducer checks | PASS |
+| `testing/frontend/react_components.test.jsx` | Assert exactly three language options | PASS |
+| `testing/realtime/driver.test.js` | Use supported Python fixture; keep driver assertions | PASS |
+| `testing/realtime/editor_sync.test.js` | Supported fixtures and explicit unsupported-language rejection | PASS |
+| `testing/security/rootless_daemon_runtime.test.js` | Replace incomplete stream mocks with Readable streams | PASS; all isolation assertions retained |
+
+## Test commands and results
+
+Host Jest invocations used these process-only values; no real environment file was changed:
+
+```powershell
+$env:REDIS_URL='redis://127.0.0.1:56181/0'
+$env:JWT_SECRET='interactive-test-only-not-a-real-credential'
+$env:MONGO_URI='mongodb://127.0.0.1:1/unused'
+$env:DOCKER_HOST='npipe:////./pipe/dockerDesktopLinuxEngine'
+```
+
+The Redis fixture `codecollab-interactive-test-redis` was task-owned, loopback-only, tmpfs-backed and bounded to 64 MiB/64 PIDs. It has been removed after verifying its ownership label. Recreate a disposable Redis and adjust `REDIS_URL` before rerunning. Tests did not target application Redis or Atlas. The first existing-suite invocation used `redis://127.0.0.1:1/0` because it did not require Redis.
+
+| Exact command/check | Status | Actual result |
+|---|---|---|
+| `npm.cmd test -- --runTestsByPath testing/execution/stdin_execution.test.js testing/execution/compiled_runners.test.js testing/security/qualification_regressions.test.js --detectOpenHandles` | PASS | 85 tests / 3 suites; preserved existing execution behavior. |
+| `npm.cmd test -- --runTestsByPath testing/execution/interactive_execution.test.js testing/frontend/interactive_terminal.test.js testing/integration/interactive_transport.test.js --detectOpenHandles` | FAIL initially | 25 tests passed; transport suite had a test syntax error. Fixed it, then corrected its non-configurable mongoose-property stub. These were real failed attempts. |
+| `npm.cmd test -- --runTestsByPath testing/integration/interactive_transport.test.js --detectOpenHandles` | PASS after harness fixes | Initial 8 transport/security cases passed; subsequently expanded to 11. |
+| `npm.cmd test -- --runTestsByPath testing/execution/stream_io.test.js testing/integration/interactive_transport.test.js --detectOpenHandles` | PASS | 16 tests / 2 suites, including live abrupt worker-loss recovery; 77.023 seconds. |
+| `npm.cmd test -- --detectOpenHandles` | FAIL initially | 522 passed, 29 failed, 3 skipped; 7 failed suites. Root causes and fixes listed above. |
+| `npm.cmd test -- --onlyFailures --silent --detectOpenHandles` | FAIL then PASS | First retry: 72 passed/7 failed. Remaining valid-language fixtures and stream mocks fixed; next retry: 50 passed/3 suites. No failed case was removed or skipped. |
+| `npm.cmd test -- --silent --detectOpenHandles` | **PASS final** | **551 passed, 3 skipped, 0 failed; 34 passed/1 skipped suites; 169.062 seconds**. Includes live Docker/Redis, mocked authorization and synthetic production-classifier tests; not all 551 are live security probes. |
+| `npm.cmd run build` | PASS | TypeScript + Vite, 122 modules; final bundle `index-CX5Tmhfq.js`. Existing Vite future native-loader warning remains. |
+| `docker build -t codecollab-runner-python:latest -f execution/runners/python/Dockerfile execution/runners/python` | PASS | Rebuilt Python runner. |
+| `docker build -t codecollab-runner-cpp:latest -f execution/runners/cpp/Dockerfile execution/runners` | PASS | Rebuilt GCC runner. |
+| `docker build -t codecollab-runner-java:latest -f execution/runners/java/Dockerfile execution/runners` | PASS | Rebuilt Java runner; HTTPS package repository configuration preserved. |
+| Scoped Compose `build backend frontend execution-worker`; later `build backend execution-worker` and `build frontend` | PASS | Built before applying corresponding updates. See exact Compose invocation prefix below. |
+| Scoped Compose `up -d --no-deps --no-build backend frontend execution-worker`; later corresponding two-service/frontend updates | PASS | Updated only necessary application services. MongoDB, Redis and execution daemon were not recreated. |
+| Scoped Compose `exec -T frontend nginx -t` | PASS | Valid Nginx configuration. |
+| Scoped Compose `config --quiet` | PASS | Valid interpolation; resolved configuration/secrets not printed. |
+| `Invoke-WebRequest http://127.0.0.1:5000/ready` and `Invoke-WebRequest http://localhost:3000/ready` | FAIL then PASS | Initially direct 200/proxy 502 after backend replacement. Final verifier/browser confirms proxy repair. |
+| `.\verify.ps1` | PASS with WARN/NOT RUN items | Six healthy services, images and endpoint/readiness checks passed; no live smoke in this invocation. |
+| `.\verify.ps1 -ExecutionSmoke` | **PASS with warnings** | All six services/dependencies/endpoints and actual inner-daemon Python/C++/Java smoke executions passed. Memory/LAN warnings and production/second-device NOT RUN remain. |
+| Actual authenticated browser at `http://localhost:3000/` | **PASS** | Real UI, backend, queue, separate Compose worker and isolated daemon; detailed results below. |
+| Final worker `getJobCounts('active','waiting','delayed')`, Redis scan for `codecollab:terminal:*`, inner daemon `docker ps -aq` | PASS | `0/0/0`, zero stream/lease keys, zero remaining runner containers. |
+| `git diff --check`; JavaScript `node --check` for changed server/test `.js` files | PASS | Whitespace and syntax verification; not a substitute for builds/live tests. |
+| Modified PowerShell syntax | NOT RUN / not applicable | No `.ps1` or `.psm1` file was modified by this task; existing verifier ran successfully. |
+| Opt-in MongoDB integration / second physical device | NOT RUN | Three existing Mongo tests remain skipped. No disposable Mongo fixture or second device was used. Actual app Mongo connectivity and browser authentication/room authorization were exercised. |
+| Native Linux/systemd rootless cgroup-v2/gVisor qualification | BLOCKED / NOT RUN | Only Windows/Docker Desktop target available; no production qualification evidence fabricated. |
+
+Compose commands above were invoked through `Invoke-DockerCommand` with arguments from `Get-ComposeArguments`, using `Read-LocalEnvironment`, `Enter-ComposeEnvironment` and `Exit-ComposeEnvironment` to protect secrets and prevent process-environment overrides. The command prefix was:
+
+```powershell
+docker compose --env-file infrastructure/.env -f infrastructure/docker-compose.yml --profile local-dev-execution
+```
+
+Runner images were saved to a task-created temporary archive, copied/loaded into the existing daemon and compared with `Get-RunnerFingerprint` (filesystem/configuration, not incompatible host/inner image IDs). All three matched. Both host and daemon archives were deleted in `finally`. The application queue was `active=0,waiting=0,delayed=0` before the initial update.
+
+### Visible browser evidence
+
+The user signed into the existing account and opened the test room. Automation used the visible editor and controls, with no injected authentication or hidden-state execution. Each language used an empty optional initial-input field. For each, automation waited for visible `Name:`, entered `Alex` and pressed Enter, waited for visible `Hello Alex` and `Age:`, then entered `20` and pressed Enter. This is live input, not preloaded stdin.
+
+| Browser case | Observed result |
+|---|---|
+| Python two prompts | Completed, exit 0, `Name: Hello Alex` then `Age: Next year: 21`; first completed run 641 ms. |
+| C++ two prompts | Completed, exit 0, same expected output; 853 ms. |
+| Java two prompts | Completed, exit 0, same expected output; 1119 ms. |
+| Waiting without input | Timeout after approximately 10 seconds (UI duration 10275 ms), exit 124, input disabled. The first stepwise automation attempt reached this deadline; the successful repetitions batched UI actions while still waiting for each visible prompt. |
+| Clear while waiting | Output cleared; running state/input stayed enabled. The same program accepted `hello` afterward. |
+| EOF | `sys.stdin.read()` returned and displayed trailing `EOF received: 'hello\n'`; completed with input disabled. |
+| Stop while waiting | Cancelled, exit 130, UI duration 814 ms; input disabled. Final daemon/queue checks showed no leftover execution. |
+| Final visible demo | Python prompt example left visible with Completed, exit 0 and `Next year: 21` (619 ms). |
+
+No separate end-to-end multi-user browser or physical second-device run was performed. Real Socket.IO/authorization tests and transport fixtures cover those boundaries, but do not count as second-device evidence.
+
+## Current service health and qualification
+
+| Service | Final observation |
+|---|---|
+| frontend | Healthy; loopback 3000; real interactive UI and proxy used successfully. |
+| backend | Healthy; loopback 5000; direct/proxied readiness reports database and Redis ready. |
+| mongo | Healthy; existing loopback 27017 mapping and volume preserved. The application's configured external MongoDB target remains unchanged and reachable. |
+| redis | Healthy; existing loopback 6379 mapping and data preserved. Test Redis was separate and removed. |
+| execution-worker | Healthy; all three images reachable and verified in daemon; actual browser jobs processed. |
+| execution-daemon | Healthy; private internal API only; existing outer 1 CPU / 512 MiB / 128-PID bounds preserved. No remaining runners at final check. |
+
+The final verifier sampled PIDs around 80 (`pids.current=82` during inspection), `pids.max=128`, zero PID-limit hits, `memory.current=476786688` with `memory.max=536870912`, and historical `memory.events max=9270` without OOM kills. A point-in-time high memory/cached-page value is not proof of a runner leak; no limit increase, daemon restart or broad cleanup was attempted.
+
+Local functional execution, requested Docker security flags, mocked policy tests and advertised daemon capabilities do **not** prove native kernel enforcement or production safety. Production remains **NOT_QUALIFIED_FOR_PRODUCTION**. The dedicated native Linux/rootless-systemd target with actual delegated CPU/memory/PID controllers and gVisor must still pass live enforcement and application-path qualification.
+
+## Outstanding work and recovery
+
+1. **Production gate:** supply the intended native Linux target; acceptance requires observed cgroup-v2 throttling/OOM/PID enforcement, verified gVisor workload isolation, cleanup and authenticated multi-user application tests. Do not publish this laptop execution service.
+2. **Second device:** follow README's trusted Wi-Fi procedure; acceptance requires login, room isolation, driver transfer and interactive Python/C++/Java through same-origin API/realtime from the actual second device. No firewall or public exposure was added.
+3. **Longer interactive use:** the retained 10-second ceiling is intentional. Any change requires an explicit policy decision with revised resource/admission tests; do not silently raise limits for slow typing.
+4. **Availability/scaling:** session ownership is in one backend process. Disconnect/restart cancels sessions; active-state replay, multiple backend coordination and persistent interactive history are not implemented. A stopped worker must be restored for eventual BullMQ stalled-job removal. Acceptance for future recovery work includes bounded fault-injection tests without duplicate execution.
+5. **Resource monitoring:** investigate growing memory/PID counters with `diagnose.ps1` and bounded observations before further stress. Current snapshots show no OOM kills/PID hits; they are not a leak certification.
+
+For missing prompts check output flushing, status, compiler errors and the total deadline. For failed input verify the original client is still driver/member and the run is still open. For uncertain acknowledgements use Stop before a new run. For a worker/image/daemon failure use `diagnose.ps1`, verify images inside the daemon, and restore only the affected component after checking active jobs. For MongoDB connectivity failures, retain the external target and update the actual public-IP allowlist through the operator; never change credentials/target to hide a failure. For Windows port reservation errors use the existing loopback-port selection workflow; never kill arbitrary services or delete volumes. For proxy 502 check direct/proxied `/ready` and frontend DNS resolution. Detailed recovery is in `INTERACTIVE_TERMINAL.md` and README.
+
+No staging/commit/push is required to inspect this work:
+
+```powershell
+git branch --show-current
+git status --short
+git diff --check
+git diff --stat
+git diff
+git ls-files --others --exclude-standard
+```
+
+Review the new files separately because plain `git diff` omits untracked files. All implementation remains available for the user's manual review; this task stops before staging or committing.
+
+---
+
+# Historical report: Standard Input (stdin) implementation — 2026-10-25
+
+The following report is retained as the prior committed baseline. Its preloaded-only UI descriptions, older test counts and former browser-tooling blocker are superseded by the current section above.
 
 ## Executive Summary
 

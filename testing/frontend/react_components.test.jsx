@@ -293,6 +293,14 @@ describe('SEC-TEST-01: Real Frontend React Component Verification', () => {
       expect(screen.getByRole('button', { name: /\+ create your first room/i })).toBeInTheDocument();
     });
 
+    it('offers exactly Python, C++ and Java when creating a room', async () => {
+      render(<DashboardPage onSelectRoom={mockOnSelectRoom} />);
+      await screen.findByText(/no rooms joined yet/i);
+      fireEvent.click(screen.getByRole('button', { name: /\+ create room/i }));
+      expect(screen.getAllByRole('option').map(option => option.value).sort()).toEqual(['cpp', 'java', 'python']);
+      expect(screen.queryByRole('option', { name: /javascript/i })).not.toBeInTheDocument();
+    });
+
     it('renders public and private room cards with correct privacy badges', async () => {
       const mockRooms = [
         {

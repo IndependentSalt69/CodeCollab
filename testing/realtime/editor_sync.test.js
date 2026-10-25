@@ -127,8 +127,8 @@ describe('M0.4b — Server-side Editor Synchronization & Hardening', () => {
 
     const changePayload = {
       roomId,
-      code: 'function add(a, b) { return a + b; }',
-      language: 'javascript',
+      code: 'def add(a, b): return a + b',
+      language: 'python',
     };
 
     const ack = await emitAck(driver, SOCKET_EVENTS.EDITOR.CHANGE, changePayload);
@@ -138,8 +138,8 @@ describe('M0.4b — Server-side Editor Synchronization & Hardening', () => {
     const update2 = await viewer2UpdatePromise;
 
     expect(update1).toEqual({
-      code: 'function add(a, b) { return a + b; }',
-      language: 'javascript',
+      code: 'def add(a, b): return a + b',
+      language: 'python',
       updatedBy: driver.id,
     });
     expect(update2).toEqual(update1);
@@ -162,7 +162,7 @@ describe('M0.4b — Server-side Editor Synchronization & Hardening', () => {
     const ack = await emitAck(viewer, SOCKET_EVENTS.EDITOR.CHANGE, {
       roomId,
       code: 'viewer unauthorized code',
-      language: 'javascript',
+      language: 'python',
     });
 
     expect(ack.ok).toBe(false);
@@ -346,7 +346,7 @@ describe('M0.4b — Server-side Editor Synchronization & Hardening', () => {
     const invalidRoom = await emitAck(driver, SOCKET_EVENTS.EDITOR.CHANGE, {
       roomId: 12345,
       code: 'abc',
-      language: 'javascript',
+      language: 'python',
     });
     expect(invalidRoom.ok).toBe(false);
     expect(invalidRoom.error).toMatch(/roomId/i);
@@ -355,7 +355,7 @@ describe('M0.4b — Server-side Editor Synchronization & Hardening', () => {
     const invalidCode = await emitAck(driver, SOCKET_EVENTS.EDITOR.CHANGE, {
       roomId,
       code: { not: 'a string' },
-      language: 'javascript',
+      language: 'python',
     });
     expect(invalidCode.ok).toBe(false);
     expect(invalidCode.error).toMatch(/code/i);
@@ -369,11 +369,17 @@ describe('M0.4b — Server-side Editor Synchronization & Hardening', () => {
     expect(invalidLang.ok).toBe(false);
     expect(invalidLang.error).toMatch(/language/i);
 
+    for (const language of ['javascript', 'js', '__proto__', 'constructor']) {
+      const unsupported = await emitAck(driver, SOCKET_EVENTS.EDITOR.CHANGE, { roomId, code: 'print(1)', language });
+      expect(unsupported.ok).toBe(false);
+      expect(unsupported.error).toMatch(/language/i);
+    }
+
     // Invalid cursor type (string or array)
     const invalidCursor = await emitAck(driver, SOCKET_EVENTS.EDITOR.CHANGE, {
       roomId,
       code: 'valid code',
-      language: 'javascript',
+      language: 'python',
       cursor: 'invalid-cursor-string',
     });
     expect(invalidCursor.ok).toBe(false);
