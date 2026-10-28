@@ -14,6 +14,9 @@ const authRouter = require('./routes/auth');
 const helmet = require('helmet');
 const roomsRouter = require('./routes/rooms');
 const { globalErrorHandler } = require('./middleware/errorHandler');
+const { getClientOrigins } = require('./config/clientOrigins');
+const clientOrigins = getClientOrigins();
+const { readiness } = require('./config/readiness');
 
 const app = express();
 const httpServer = http.createServer(app);
@@ -30,13 +33,13 @@ app.use(helmet({
 
 // Middleware
 app.use(cors({
-  origin: process.env.CLIENT_URL || 'http://localhost:3000',
+  origin: clientOrigins,
 }));
 app.use(express.json());
 
 // Initialize realtime layer
 const io = initRealtimeServer(httpServer, {
-  origin: process.env.CLIENT_URL || 'http://localhost:3000',
+  origin: clientOrigins,
 });
 
 // Attach io to Express app instance
@@ -52,6 +55,10 @@ app.get('/health', (req, res) => {
     status: 'ok',
     timestamp: new Date().toISOString(),
   });
+});
+app.get('/ready', async (req, res) => {
+  const state = await readiness({ connection: require('mongoose').connection });
+  res.status(state.ready ? 200 : 503).json({ status: state.ready ? 'ready' : 'not_ready', database: state.database, redis: state.redis });
 });
 
 app.use('/api/auth', authRouter);
@@ -71,4 +78,4 @@ httpServer.listen(PORT, () => {
   console.log(`Realtime server initialized`);
 });
 
-module.exports = { app, httpServer, io };
+module.exports = { app, httpServer, io };

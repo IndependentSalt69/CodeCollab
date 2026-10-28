@@ -2,7 +2,13 @@
 
 This directory houses the containerized code execution subsystem, Redis-backed execution queue, standalone execution worker, persistence, realtime event integration, and frontend terminal interface for CodeCollab.
 
-## Architecture (M1.0 Phase B: Rootless Execution Daemon & Runtime Isolation)
+## Current interactive path
+
+The browser's Run Code action uses Socket.IO `terminal:*` events. The backend authenticates the initiating socket, current database room membership and driver, then enqueues a UUID session on the existing BullMQ queue. Bounded Redis streams carry live input and ordered output between backend and worker. The worker calls the same `executeCode`/Docker executor as batch runs. No Docker access is added to the backend or browser. Interactive sessions are ephemeral and do not create execution-history database records.
+
+See [INTERACTIVE_TERMINAL.md](../docs/INTERACTIVE_TERMINAL.md) for limits, lifecycle and recovery. The HTTP batch API and preloaded-input support remain available; the diagram below describes that older batch path, not the current browser Run Code action.
+
+## Batch API architecture (M1.0 Phase B)
 
 ```text
 User Interface (Frontend React + Monaco Editor)

@@ -85,7 +85,7 @@ async function verifyDriverPermission({ roomId, user, socketId, io }) {
 /**
  * Validates execution request payload parameters.
  */
-function validateExecutionRequest({ roomId, language, code, timeout, memory }) {
+function validateExecutionRequest({ roomId, language, code, stdin, timeout, memory }) {
   if (!roomId || typeof roomId !== 'string' || !roomId.trim()) {
     return { valid: false, error: 'roomId is required and must be a non-empty string' };
   }
@@ -121,6 +121,18 @@ function validateExecutionRequest({ roomId, language, code, timeout, memory }) {
       valid: false,
       error: `code exceeds maximum allowed size of ${sandboxConfig.MAX_CODE_SIZE_BYTES / 1024}KB`,
     };
+  }
+
+  if (stdin !== undefined && stdin !== null) {
+    if (typeof stdin !== 'string') {
+      return { valid: false, error: 'stdin must be a string' };
+    }
+    if (Buffer.byteLength(stdin, 'utf8') > sandboxConfig.MAX_STDIN_SIZE_BYTES) {
+      return {
+        valid: false,
+        error: `stdin exceeds maximum allowed size of ${sandboxConfig.MAX_STDIN_SIZE_BYTES / 1024}KB`,
+      };
+    }
   }
 
   if (timeout !== undefined && timeout !== null) {
@@ -167,9 +179,9 @@ function toObjectId(id) {
 /**
  * Orchestrates code execution through authentication, validation, queueing, persistence, and realtime broadcasts.
  */
-async function executeCodeService({ roomId, language, code, timeout, memory, user, socketId, io }) {
+async function executeCodeService({ roomId, language, code, stdin, timeout, memory, user, socketId, io }) {
   // 1. Validation
-  const validation = validateExecutionRequest({ roomId, language, code, timeout, memory });
+  const validation = validateExecutionRequest({ roomId, language, code, stdin, timeout, memory });
   if (!validation.valid) {
     const error = new Error(validation.error);
     error.status = 400;
@@ -177,6 +189,7 @@ async function executeCodeService({ roomId, language, code, timeout, memory, use
   }
 
   const normalizedLang = validation.normalizedLang;
+  const sanitizedStdin = typeof stdin === 'string' ? stdin : '';
 
   // 2. Authorization (Driver check)
   const authCheck = await verifyDriverPermission({ roomId, user, socketId, io });
@@ -208,6 +221,7 @@ async function executeCodeService({ roomId, language, code, timeout, memory, use
       triggeredBy,
       language: normalizedLang,
       code,
+      stdin: sanitizedStdin,
       status: 'queued',
       stdout: '',
       stderr: '',
@@ -223,6 +237,7 @@ async function executeCodeService({ roomId, language, code, timeout, memory, use
       triggeredBy,
       language: normalizedLang,
       code,
+      stdin: sanitizedStdin,
       status: 'queued',
       stdout: '',
       stderr: '',
@@ -252,6 +267,7 @@ async function executeCodeService({ roomId, language, code, timeout, memory, use
     execResult = await executionQueue.execute({
       language: normalizedLang,
       code,
+      stdin: sanitizedStdin,
       timeout,
       memory,
       roomId,

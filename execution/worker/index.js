@@ -36,13 +36,15 @@ let isShuttingDown = false;
  * @returns {Promise<Object>} Execution result object
  */
 async function processJob(job) {
-  const { language, code, timeout, memory, roomId, userId } = job.data || {};
+  if (job.data?.sessionId) return require('./interactive')(job);
+  const { language, code, stdin, timeout, memory, roomId, userId } = job.data || {};
   const startTime = Date.now();
 
   try {
     const result = await executeCode({
       language,
       code,
+      stdin,
       timeout,
       memory,
     });
@@ -162,7 +164,7 @@ async function shutdown(signal = 'SIGTERM') {
  */
 async function validateWorkerPreflight(options = {}) {
   const { getDockerClient } = require('../engine/executor');
-  const { verifyCgroupCapabilities, verifyRuntimeAvailable } = require('../engine/dockerConfig');
+  const { verifyCgroupCapabilities, verifyRuntimeAvailable, verifyProductionDaemon } = require('../engine/dockerConfig');
   const sandboxConfig = require('../engine/sandboxConfig');
 
   const docker = options.dockerClient || getDockerClient();
@@ -172,6 +174,7 @@ async function validateWorkerPreflight(options = {}) {
     nodeEnv: options.nodeEnv,
     allowUnenforcedCgroups: options.allowUnenforcedCgroups,
   });
+  await verifyProductionDaemon(docker, sandboxConfig.CONTAINER_RUNTIME, options.nodeEnv);
 
   if (sandboxConfig.CONTAINER_RUNTIME) {
     await verifyRuntimeAvailable(docker, sandboxConfig.CONTAINER_RUNTIME);

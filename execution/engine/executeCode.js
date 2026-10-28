@@ -19,6 +19,7 @@ module.exports = async function executeCode(runSpec) {
   const {
     language,
     code,
+    stdin,
     timeout = sandboxConfig.DEFAULT_TIMEOUT_MS,
     memory = sandboxConfig.DEFAULT_MEMORY,
   } = runSpec;
@@ -31,9 +32,20 @@ module.exports = async function executeCode(runSpec) {
     throw new Error(`Code exceeds maximum allowed size of ${sandboxConfig.MAX_CODE_SIZE_BYTES / 1024}KB`);
   }
 
+  if (stdin !== undefined && stdin !== null) {
+    if (typeof stdin !== 'string') {
+      throw new Error('stdin must be a string');
+    }
+    if (Buffer.byteLength(stdin, 'utf8') > sandboxConfig.MAX_STDIN_SIZE_BYTES) {
+      throw new Error(`stdin exceeds maximum allowed size of ${sandboxConfig.MAX_STDIN_SIZE_BYTES / 1024}KB`);
+    }
+  }
+
   const rawOutput = await runInSandbox({
     language,
     code,
+    stdin,
+    io: runSpec.io,
     timeout,
     memory,
     cpu: sandboxConfig.cpu,

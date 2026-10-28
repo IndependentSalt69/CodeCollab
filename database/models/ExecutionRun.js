@@ -21,6 +21,10 @@ const executionRunSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
+    stdin: {
+      type: String,
+      default: '',
+    },
     stdout: {
       type: String,
       default: '',

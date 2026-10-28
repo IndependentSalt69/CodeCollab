@@ -33,8 +33,8 @@ module.exports = function registerEditorHandlers(io, socket) {
       return;
     }
 
-    if (typeof language !== 'string' || !language.trim()) {
-      callback?.({ ok: false, error: 'language must be a non-empty string' });
+    if (typeof language !== 'string' || !['python', 'cpp', 'java'].includes(language)) {
+      callback?.({ ok: false, error: 'language must be python, cpp or java' });
       return;
     }
 

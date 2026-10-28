@@ -1,12 +1,18 @@
 export type ExecutionStatus =
   | 'idle'
   | 'queued'
+  | 'starting'
   | 'running'
   | 'completed'
   | 'failed'
-  | 'timeout';
+  | 'timeout'
+  | 'cancelled';
 
 export interface ExecutionResult {
+  sessionId?: string;
+  seq?: number;
+  inputClosed?: boolean;
+  segments?: { channel: 'stdout' | 'stderr'; text: string; seq?: number }[];
   runId?: string;
   roomId?: string;
   status: ExecutionStatus;
@@ -24,6 +30,7 @@ export interface ExecuteCodePayload {
   roomId: string;
   language: string;
   code: string;
+  stdin?: string;
   timeout?: number;
   memory?: string;
   socketId?: string;

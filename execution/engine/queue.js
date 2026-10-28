@@ -140,11 +140,12 @@ class ExecutionQueue {
     const jobProcessor = processor || (async (job) => {
       // Lazy load executeCode only when worker is explicitly started
       const executeCode = require('./executeCode');
-      const { language, code, timeout, memory } = job.data;
+      const { language, code, stdin, timeout, memory } = job.data;
       try {
         const result = await executeCode({
           language,
           code,
+          stdin,
           timeout,
           memory,
         });
@@ -193,6 +194,7 @@ class ExecutionQueue {
     const {
       language,
       code,
+      stdin,
       timeout = sandboxConfig.DEFAULT_TIMEOUT_MS,
       memory = sandboxConfig.DEFAULT_MEMORY,
       roomId,
@@ -208,6 +210,20 @@ class ExecutionQueue {
       const sizeErr = new Error(`Code exceeds maximum allowed size of ${sandboxConfig.MAX_CODE_SIZE_BYTES / 1024}KB`);
       sizeErr.status = 400;
       throw sizeErr;
+    }
+
+    // Defensive stdin type and size check
+    if (stdin !== undefined && stdin !== null) {
+      if (typeof stdin !== 'string') {
+        const typeErr = new Error('stdin must be a string');
+        typeErr.status = 400;
+        throw typeErr;
+      }
+      if (Buffer.byteLength(stdin, 'utf8') > sandboxConfig.MAX_STDIN_SIZE_BYTES) {
+        const sizeErr = new Error(`stdin exceeds maximum allowed size of ${sandboxConfig.MAX_STDIN_SIZE_BYTES / 1024}KB`);
+        sizeErr.status = 400;
+        throw sizeErr;
+      }
     }
 
     const queue = this.getQueue();
@@ -226,11 +242,13 @@ class ExecutionQueue {
     const payload = {
       language,
       code,
+      stdin: typeof stdin === 'string' ? stdin : '',
       timeout,
       memory,
       roomId: roomId || null,
       userId: userId || null,
       enqueuedAt: Date.now(),
+      ...(jobSpec.sessionId ? { sessionId: jobSpec.sessionId } : {}),
     };
 
     return await queue.add('executeCode', payload, opts);
