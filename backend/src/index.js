@@ -1,8 +1,15 @@
 const path = require('path');
 
-require('dotenv').config({
-  path: path.resolve(__dirname, '../../.env'),
-});
+// Development-only environment bootstrap (loads .env, sets local PORT 5001, derives REDIS_URL, configures CORS)
+if (process.env.NODE_ENV !== 'production') {
+  const { initDevBootstrap } = require('./config/devBootstrap');
+  initDevBootstrap();
+} else {
+  require('dotenv').config({
+    path: path.resolve(__dirname, '../../.env'),
+  });
+}
+
 const express = require('express');
 const cors = require('cors');
 const http = require('http');
@@ -68,14 +75,29 @@ app.use('/api/execute', executeRouter);
 // Global sanitized error handler (SEC-API-02)
 app.use(globalErrorHandler);
 
-
-
 // Start server
 const PORT = process.env.PORT || 5000;
 
-httpServer.listen(PORT, () => {
-  console.log(`Backend server running on port ${PORT}`);
-  console.log(`Realtime server initialized`);
-});
+async function startServer() {
+  if (process.env.NODE_ENV !== 'production') {
+    const { verifyDevDependencies } = require('./config/devBootstrap');
+    await verifyDevDependencies();
+  }
 
-module.exports = { app, httpServer, io };
+  return new Promise((resolve) => {
+    httpServer.listen(PORT, () => {
+      console.log(`Backend server running on port ${PORT}`);
+      console.log(`Realtime server initialized`);
+      resolve(httpServer);
+    });
+  });
+}
+
+if (require.main === module) {
+  startServer().catch((err) => {
+    console.error(`[Startup Error] ${err.message}`);
+    process.exit(1);
+  });
+}
+
+module.exports = { app, httpServer, io, startServer };

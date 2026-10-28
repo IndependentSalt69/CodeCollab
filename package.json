@@ -41,6 +41,11 @@
   "jest": {
     "setupFiles": [
       "<rootDir>/testing/setupEnv.js"
-    ]
+    ],
+    "moduleNameMapper": {
+      "^axios$": "<rootDir>/node_modules/axios",
+      "^react$": "<rootDir>/node_modules/react",
+      "^react-dom$": "<rootDir>/node_modules/react-dom"
+    }
   }
 }

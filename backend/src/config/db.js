@@ -1,5 +1,10 @@
 const mongoose = require('mongoose');
 
+function sanitizeMongoUri(uri = '') {
+  if (typeof uri !== 'string') return '';
+  return uri.replace(/(:\/\/)([^:@\s]+)?(?::([^@\s]+))?@/, '$1***:***@');
+}
+
 const connectDB = async () => {
   const mongoURI = process.env.MONGO_URI;
 
@@ -12,7 +17,11 @@ const connectDB = async () => {
 
     return conn;
   } catch (error) {
-    console.error(`[MongoDB] Connection error: ${error.message}`);
+    const sanitizedError = sanitizeMongoUri(error.message);
+    console.error(`[MongoDB] Connection error: ${sanitizedError}`);
+    console.error(
+      `[MongoDB] Note: Please check your network connection, IP whitelist on MongoDB Atlas, or ensure your configured database host is accessible.`
+    );
     throw error;
   }
 };

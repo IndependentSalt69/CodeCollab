@@ -1,6 +1,17 @@
 /** @jest-environment jsdom */
-jest.mock('axios');
-const axios = require('axios');
+jest.mock('axios', () => {
+  const mockAxios = {
+    post: jest.fn(),
+    get: jest.fn(),
+    isAxiosError: jest.fn(),
+  };
+  return {
+    __esModule: true,
+    default: mockAxios,
+    ...mockAxios,
+  };
+});
+const axios = require('axios').default;
 const { register } = require('../../frontend/src/services/authService');
 const { listRooms } = require('../../frontend/src/services/roomService');
 const { submitCodeExecution } = require('../../frontend/src/services/executionService');
