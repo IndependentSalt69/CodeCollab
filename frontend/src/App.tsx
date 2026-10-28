@@ -9,6 +9,7 @@ import {
 import CodeEditor from './components/editor/CodeEditor';
 import Terminal from './components/terminal/Terminal';
 import ChatPanel from './components/chat/ChatPanel';
+import VoicePanel from './components/voice/VoicePanel';
 import { applyTerminalEvent, terminalRequest, TerminalEvent, TerminalRequestError } from './services/interactiveTerminal';
 import { ExecutionResult, ExecutionStatus } from './types/execution';
 import { Room } from './types/room';
@@ -788,6 +789,7 @@ export default function App() {
           currentUserId={authUser?.id}
           isJoined={roomStatus.startsWith('joined')}
         />
+        <VoicePanel roomId={roomId} token={authToken} />
 
         {/* Active Users Section */}
         <div style={{ background: '#ffffff', padding: '1.25rem', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
