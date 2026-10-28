@@ -2,6 +2,7 @@ const { spawn } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
 const mongoose = require('mongoose');
 const Room = require('../../database/models/Room');
+const ExecutionRun = require('../../database/models/ExecutionRun');
 const { ExecutionQueue } = require('../../execution/engine/queue');
 const { InteractiveSessions } = require('../../backend/src/services/interactiveSessions');
 const { setDriver, removeDriver } = require('../../realtime/server/driverState');
@@ -40,6 +41,8 @@ describe('interactive backend-to-worker transport and authorization', () => {
     room = { owner: 'owner', members: ['member'] };
     mongoose.connection.readyState = 1;
     jest.spyOn(Room, 'findOne').mockResolvedValue(room);
+    jest.spyOn(ExecutionRun, 'create').mockResolvedValue({ _id: 'run-id' });
+    jest.spyOn(ExecutionRun, 'updateOne').mockResolvedValue({});
     io = { sockets: { sockets: new Map([driver, viewer, stranger].map(s => [s.id, s])), adapter: { rooms: new Map([['interactive-room', new Set(['driver', 'viewer', 'stranger'])]]) } } };
     manager = new InteractiveSessions(io, { queue });
     setDriver('interactive-room', 'driver');
