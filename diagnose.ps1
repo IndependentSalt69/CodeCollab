@@ -59,14 +59,14 @@ try {
                 $expectedHash = ((Stack @('config', '--hash', $service)).Output -split '\s+')[-1]
                 $labels = (Invoke-DockerCommand @('inspect', '--format', '{{json .Config.Labels}}', $id) $values).Output | ConvertFrom-Json
                 $actualHash = $labels.'com.docker.compose.config-hash'
-                if ($expectedHash -ne $actualHash) { Report WARN $service 'Configuration differs from the existing container.' 'Schedule a maintenance window and explicitly recreate only the affected service; start.ps1 preserves existing containers.' }
+                if ($expectedHash -ne $actualHash) { Report WARN $service 'Configuration differs from the existing container.' $(if ($service -in @('backend', 'frontend', 'execution-worker')) { '.\start.ps1 rebuilds and replaces changed application services.' } else { 'Schedule a maintenance window and explicitly recreate only the affected service; start.ps1 preserves data and daemon containers.' }) }
             } catch {
                 Report FAIL $service (Protect-DiagnosticText $_.Exception.Message $values) '.\start.ps1 for missing services; review bounded logs below before any manual recreation.'
                 $logs = Invoke-DockerCommand ($compose + @('logs', '--no-color', '--tail', '15', $service)) $values -AllowFailure -IncludeStderr
                 Write-Host (Protect-DiagnosticText $logs.Output $values)
             }
         }
-        Check 'Worker dependencies' { $null = Stack @('exec', '-T', 'execution-worker', 'node', 'execution/worker/healthcheck.js') } 'Run start.ps1 to transfer/inspect images; inspect worker Redis and daemon connectivity. Old worker images need explicit maintenance recreation.'
+        Check 'Worker dependencies' { $null = Stack @('exec', '-T', 'execution-worker', 'node', 'execution/worker/healthcheck.js') } 'Run start.ps1 to transfer/inspect images; inspect worker Redis and daemon connectivity. Rerun .\start.ps1 to rebuild and replace an outdated worker.'
         foreach ($language in @('python', 'cpp', 'java')) {
             Check "$language image" {
                 $image = "codecollab-runner-${language}:latest"

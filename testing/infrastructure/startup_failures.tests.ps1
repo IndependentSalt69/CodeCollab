@@ -72,6 +72,10 @@ Export-ModuleMember -Function *
         Assert (($exitCode -eq 0) -eq $success) "Unexpected exit for ${failure}: $output"
         $workerStarts = @($calls | Where-Object { $_ -like '*up*execution-worker*' })
         Assert (($workerStarts.Count -gt 0) -eq $success) "Worker started before image availability for $failure"
+        if ($success) {
+            Assert (@($calls | Where-Object { $_ -like '* up -d --no-build --no-recreate mongo redis execution-daemon' }).Count -eq 1) 'Data and daemon services must be preserved with --no-recreate'
+            Assert (@($calls | Where-Object { $_ -like '* up -d --no-build backend frontend execution-worker' }).Count -eq 1) 'Application services must be replaced when their images change (no --no-recreate)'
+        }
         if ($failure -eq 'empty-info') { Assert (@($calls | Where-Object { $_ -like '*exec*info --format*' }).Count -eq 2) 'An empty successful daemon probe must not satisfy readiness' }
         Assert ((@($calls | Where-Object { $_ -like '*--force-recreate mongo' }).Count -eq 1) -eq ($failure -eq 'stopped-port')) 'Only an inactive Mongo container with stale mapping may be recreated'
         if ($failure -eq 'build') { Assert (@($calls | Where-Object { $_ -like '* up *' }).Count -eq 0) 'Build failure must not change active stack' }

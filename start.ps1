@@ -41,7 +41,7 @@ try {
         Write-Host 'Building application and worker images before starting services...'
         $null = Invoke-Stack @('build', 'backend', 'frontend', 'execution-worker')
     }
-    # Preserve existing services. Operator-managed recreation is a maintenance action.
+    # Preserve existing data and daemon services. Operator-managed recreation is a maintenance action.
     if (-not $runningPort) { Repair-StoppedMongoMapping $compose $port $values }
     $null = Invoke-Stack @('up', '-d', '--no-build', '--no-recreate', 'mongo', 'redis', 'execution-daemon')
     $ready = $false
@@ -70,7 +70,9 @@ try {
         $actual = Get-RunnerFingerprint $image $innerDocker $values
         if ($actual -ne $expected) { throw "Image verification failed for $image; worker was not started by this invocation." }
     }
-    $null = Invoke-Stack @('up', '-d', '--no-build', '--no-recreate', 'backend', 'frontend', 'execution-worker')
+    # Stateless app services: Compose replaces a container only when its image or configuration
+    # changed, so a rebuilt image is actually deployed and an unchanged stack is left running.
+    $null = Invoke-Stack @('up', '-d', '--no-build', 'backend', 'frontend', 'execution-worker')
     Write-Host 'Waiting for health checks (up to 60 seconds)...'
     for ($attempt = 0; $attempt -lt 30; $attempt++) {
         $states = (Invoke-Stack @('ps', '--all', '--format', 'json')).Output
@@ -80,7 +82,7 @@ try {
     }
     & (Join-Path $PSScriptRoot 'verify.ps1')
     if ($LASTEXITCODE -ne 0) { throw 'Verification found failures. Run .\diagnose.ps1 for targeted recovery steps.' }
-    Write-Host 'Startup verification passed. Existing services were preserved; diagnose.ps1 reports configuration/image drift. Run verify.ps1 -ExecutionSmoke for disposable language runs.'
+    Write-Host 'Startup verification passed. Data services were preserved; application services were updated only if their image or configuration changed. Run verify.ps1 -ExecutionSmoke for disposable language runs.'
 } catch {
     Write-Host "FAIL startup: $(Protect-DiagnosticText $_.Exception.Message $values)" -ForegroundColor Red
     Write-Host 'Next: .\diagnose.ps1. Existing volumes and services were preserved; no rollback or cleanup of unrelated data was attempted.'
