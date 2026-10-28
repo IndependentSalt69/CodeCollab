@@ -321,7 +321,8 @@ Returns past code runs for a room. Every room member can see every run in the ro
 }
 ```
 
-- `status` is one of `queued`, `running`, `completed`, `failed`, `timeout`. A run is only `completed` after its final result has been saved.
+- `status` is one of `queued`, `running`, `completed`, `failed`, `timeout`, `cancelled`. A run is only `completed` after its final result has been saved.
+- Runs from both the interactive terminal (`terminal:start`) and `POST /api/execute` are included. Like source code, program input (`stdin`) is stored but not returned.
 - `timedOut` is `true` when `status` is `timeout`.
 - `stdout` and `stderr` are stored with the existing 64 KiB output limit, so long output may end with a truncation notice.
 

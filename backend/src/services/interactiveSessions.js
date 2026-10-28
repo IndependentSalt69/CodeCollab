@@ -1,6 +1,7 @@
 const { randomUUID } = require('node:crypto');
 const mongoose = require('mongoose');
 const Room = require('../../../database/models/Room');
+const ExecutionRun = require('../../../database/models/ExecutionRun');
 const queue = require('../../../execution/engine/queue');
 const policy = require('../../../execution/engine/sandboxConfig');
 const protocol = require('../../../execution/engine/sessionProtocol');
@@ -12,6 +13,8 @@ const userId = socket => {
   return String(user.userId || user.id || user._id || '') || null;
 };
 const membersOf = room => new Set([room.owner, ...(room.members || [])].map(id => String(id?._id || id)));
+// Execution history keeps the same 64 KiB per-stream cap as batch runs.
+const capped = (current, text) => current.length >= policy.MAX_OUTPUT_BUFFER_BYTES ? current : (current + text).slice(0, policy.MAX_OUTPUT_BUFFER_BYTES);
 const belongs = (socket, roomId, allowed) => userId(socket) && allowed.has(userId(socket)) &&
   socket.rooms.has(roomId) && socket.data?.roomVerifiedUsers?.has(roomId);
 
@@ -66,8 +69,9 @@ class InteractiveSessions {
     const session = { id, names, socket, roomId: payload.roomId, userId: userId(socket), language: validation.normalizedLang,
       status: 'queued', cursor: '0-0', seq: 0, inputSeq: 0, inputBytes: Buffer.byteLength(payload.stdin || ''),
       inputCount: 0, inputClosed: false, deadline: Date.now() + 25000, timeout: payload.timeout || policy.MAX_TIMEOUT_MS,
-      renewed: Date.now(), emittedBytes: 0 };
+      renewed: Date.now(), emittedBytes: 0, startedAt: Date.now(), stdin: payload.stdin || '', stdout: '', stderr: '' };
     this.sessions.set(id, session);
+    this.recordStart(session, payload.code);
     try {
       await redis.set(names.lease, 'alive', 'PX', protocol.LEASE_MS);
       session.job = await this.queue.add({ language: session.language, code: payload.code, stdin: payload.stdin,
@@ -95,7 +99,7 @@ class InteractiveSessions {
     await protocol.append(this.redis, session.names.input, session.names.lease,
       { action, seq: sequence, ...(action === 'input' ? { data: payload.data } : {}) }, 1024);
     session.inputSeq = sequence;
-    if (action === 'input') { session.inputBytes += Buffer.byteLength(payload.data); session.inputCount++; }
+    if (action === 'input') { session.inputBytes += Buffer.byteLength(payload.data); session.inputCount++; session.stdin += payload.data; }
     if (action === 'eof') session.inputClosed = true;
     if (action === 'cancel') await this.cancel(session);
     return { ok: true, seq: sequence };
@@ -151,6 +155,7 @@ class InteractiveSessions {
             } else if (event.type === 'output') {
               if (!['stdout', 'stderr'].includes(event.channel) || typeof event.text !== 'string' || Buffer.byteLength(event.text) > 4200) throw Error('Invalid worker output');
               session.emittedBytes += Buffer.byteLength(event.text);
+              session[event.channel] = capped(session[event.channel], event.text);
               if (session.emittedBytes > 132000) throw Error('Output limit exceeded');
             } else throw Error('Invalid worker event');
             await this.deliver(session, event, allowed);
@@ -162,10 +167,26 @@ class InteractiveSessions {
   async finish(session, result) {
     if (!this.sessions.delete(session.id)) return;
     if (result) await this.deliver(session, { ...result, type: 'finished', seq: result.seq || session.seq + 1 }).catch(() => {});
+    this.recordFinish(session, result);
     // Removing the lease also cancels a still-running worker. Expiry handles Redis loss.
     if (this.redis) await this.redis.del(...Object.values(session.names)).catch(() => {});
     try { await session.job?.remove(); } catch { /* Locked jobs auto-remove after worker completion/stall. */ }
     if (!this.sessions.size) { clearInterval(this.timer); this.timer = null; }
+  }
+  // History is best effort and never blocks or fails the live terminal session.
+  recordStart(session, code) {
+    session.run = ExecutionRun.create({ roomId: session.roomId, triggeredBy: session.userId, language: session.language,
+      code, stdin: session.stdin, status: 'queued' })
+      .catch(error => { console.error(`[Terminal] Could not save execution run: ${error.message}`); return null; });
+  }
+  recordFinish(session, result) {
+    const status = ['completed', 'failed', 'timeout', 'cancelled'].includes(result?.status) ? result.status : 'failed';
+    void session.run?.then(run => run && ExecutionRun.updateOne({ _id: run._id }, { $set: {
+      status, exitCode: Number.isInteger(result?.exitCode) ? result.exitCode : (status === 'completed' ? 0 : 1),
+      executionTimeMs: result?.executionTimeMs || Date.now() - session.startedAt,
+      stdin: session.stdin, stdout: session.stdout,
+      stderr: result?.error && !session.stderr ? result.error : session.stderr,
+    } })).catch(error => console.error(`[Terminal] Could not update execution run: ${error.message}`));
   }
   register(socket) {
     let busy = false, window = Date.now(), commands = 0, startWindow = Date.now(), starts = 0;
