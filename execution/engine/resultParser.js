@@ -14,7 +14,7 @@ function parseExecutionResult(rawOutput) {
     stderr: rawOutput.stderr || '',
     exitCode: typeof rawOutput.exitCode === 'number' ? rawOutput.exitCode : 0,
     executionTimeMs: rawOutput.executionTimeMs || 0,
-    status: rawOutput.status && ['completed', 'failed', 'timeout'].includes(rawOutput.status) ? rawOutput.status : status,
+    status: rawOutput.status && ['completed', 'failed', 'timeout', 'cancelled'].includes(rawOutput.status) ? rawOutput.status : status,
   };
 }
 

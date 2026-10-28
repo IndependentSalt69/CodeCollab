@@ -1,8 +1,9 @@
 [CmdletBinding()]
-param()
+param([switch]$RepairLocalJwtSecret)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot 'scripts/DevTools.psm1') -Force
 
 $repoRoot = $PSScriptRoot
 $infraDir = Join-Path $repoRoot 'infrastructure'
@@ -44,18 +45,10 @@ function New-CodeCollabSecret {
 }
 
 if (Test-Path $envPath -PathType Leaf) {
-    Write-Host 'infrastructure/.env already exists; preserving it.' -ForegroundColor Yellow
-    $envText = [System.IO.File]::ReadAllText($envPath)
-    $placeholderKeys = @('JWT_SECRET', 'MONGO_ROOT_PASSWORD', 'MONGO_APP_PASSWORD', 'REDIS_PASSWORD')
-    $unresolved = @()
-    foreach ($key in $placeholderKeys) {
-        if ($envText -match "(?m)^$key=\s*replace_with_") {
-            $unresolved += $key
-        }
-    }
-    if ($unresolved.Count -gt 0) {
-        throw "infrastructure/.env still contains template placeholders for: $($unresolved -join ', '). Replace those values, then rerun setup.ps1. Existing configuration was not overwritten."
-    }
+    if ($RepairLocalJwtSecret -and (Repair-LocalJwtSecret $envPath)) {
+        Write-Warning 'Replaced only the missing/weak local JWT_SECRET. Updating the backend will invalidate existing sessions; sign in again. Database credentials are unchanged.'
+    } else { Write-Host 'infrastructure/.env already exists; preserving it.' -ForegroundColor Yellow }
+    Assert-LocalEnvironment (Read-LocalEnvironment $envPath)
 } else {
     $envText = [System.IO.File]::ReadAllText($examplePath)
     $secretValues = @{
@@ -74,7 +67,11 @@ if (Test-Path $envPath -PathType Leaf) {
     }
 
     [System.IO.Directory]::CreateDirectory($infraDir) | Out-Null
-    [System.IO.File]::WriteAllText($envPath, $envText, [System.Text.UTF8Encoding]::new($false))
+    $stream = [IO.File]::Open($envPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    try {
+        $bytes = [Text.UTF8Encoding]::new($false).GetBytes($envText)
+        $stream.Write($bytes, 0, $bytes.Length)
+    } finally { $stream.Dispose() }
     Write-Host 'Created infrastructure/.env with unique local secrets.' -ForegroundColor Green
     Write-Host 'Secret values were not printed. Keep this file local and never commit it.' -ForegroundColor Yellow
 }
@@ -82,4 +79,5 @@ if (Test-Path $envPath -PathType Leaf) {
 Write-Host ''
 Write-Host 'Setup complete.' -ForegroundColor Green
 Write-Host 'Next: run .\start.ps1 from this repository root.'
+try { Assert-DockerReady; Write-Host 'PASS Docker Linux engine and Compose are ready.' } catch { Write-Warning $_.Exception.Message }
 Write-Host 'This configuration is for trusted local development only; it does not qualify production sandbox security.' -ForegroundColor Yellow

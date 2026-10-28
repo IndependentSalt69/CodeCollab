@@ -10,6 +10,7 @@ module.exports = {
   DEFAULT_MEMORY: '256m',
   MAX_MEMORY_BYTES: 256 * 1024 * 1024, // 256 MiB (268,435,456 bytes)
   MAX_CODE_SIZE_BYTES: 64 * 1024,      // 64 KiB (65,536 bytes)
+  MAX_STDIN_SIZE_BYTES: 64 * 1024,     // 64 KiB (65,536 bytes)
   MAX_OUTPUT_BUFFER_BYTES: 64 * 1024,  // 64 KiB (65,536 bytes)
   MAX_WAITING_JOBS: 25,
 

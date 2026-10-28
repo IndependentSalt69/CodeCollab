@@ -110,6 +110,123 @@ describe('Frontend Code Execution & Terminal Integration (M0.5e)', () => {
       expect(result.result.exitCode).toBe(0);
     });
 
+    it('should pass the current stdin input value with the execution request', async () => {
+      const mockResult = {
+        ok: true,
+        runId: 'run-stdin-1',
+        status: 'completed',
+        result: {
+          stdout: '30\n',
+          stderr: '',
+          exitCode: 0,
+          executionTimeMs: 95,
+          status: 'completed',
+        },
+      };
+
+      axios.post.mockResolvedValueOnce({ data: mockResult });
+
+      const stdinValue = '10\n20\n';
+      const payload = {
+        roomId: 'room-test-stdin',
+        language: 'python',
+        code: 'a = int(input())\nb = int(input())\nprint(a + b)',
+        stdin: stdinValue,
+        socketId: 'socket-driver-1',
+      };
+
+      const token = 'jwt.mock.token.here';
+      const result = await submitCodeExecution(payload, token);
+
+      expect(axios.post).toHaveBeenCalledTimes(1);
+      expect(axios.post).toHaveBeenCalledWith(
+        'http://localhost:5000/api/execute',
+        expect.objectContaining({
+          stdin: '10\n20\n',
+          code: expect.any(String),
+          language: 'python',
+          roomId: 'room-test-stdin',
+        }),
+        expect.any(Object)
+      );
+      expect(result.ok).toBe(true);
+      expect(result.result.stdout).toBe('30\n');
+    });
+
+    it('should preserve multiline input, spaces, newlines, and Unicode characters in stdin payload', async () => {
+      axios.post.mockResolvedValueOnce({
+        data: {
+          ok: true,
+          status: 'completed',
+          result: { stdout: 'OK\n', stderr: '', exitCode: 0, executionTimeMs: 50, status: 'completed' },
+        },
+      });
+
+      const complexStdin = 'line 1 with spaces   \nline 2 with "quotes" and $metachars;\n日本語 テスト ⚡ Unicode';
+      const payload = {
+        roomId: 'room-unicode',
+        language: 'python',
+        code: 'import sys\nprint("OK")',
+        stdin: complexStdin,
+      };
+
+      const result = await submitCodeExecution(payload, 'token');
+
+      expect(axios.post).toHaveBeenCalledWith(
+        'http://localhost:5000/api/execute',
+        expect.objectContaining({ stdin: complexStdin }),
+        expect.any(Object)
+      );
+      expect(result.ok).toBe(true);
+    });
+
+    it('should support empty and omitted stdin for backwards compatibility', async () => {
+      axios.post.mockResolvedValueOnce({
+        data: {
+          ok: true,
+          status: 'completed',
+          result: { stdout: 'done\n', stderr: '', exitCode: 0, executionTimeMs: 50, status: 'completed' },
+        },
+      });
+
+      // Omitted stdin
+      const payload1 = {
+        roomId: 'room-omitted',
+        language: 'python',
+        code: 'print("done")',
+      };
+      const res1 = await submitCodeExecution(payload1, 'token');
+      expect(res1.ok).toBe(true);
+      expect(axios.post).toHaveBeenLastCalledWith(
+        'http://localhost:5000/api/execute',
+        payload1,
+        expect.any(Object)
+      );
+
+      axios.post.mockResolvedValueOnce({
+        data: {
+          ok: true,
+          status: 'completed',
+          result: { stdout: 'done\n', stderr: '', exitCode: 0, executionTimeMs: 50, status: 'completed' },
+        },
+      });
+
+      // Empty string stdin
+      const payload2 = {
+        roomId: 'room-empty',
+        language: 'python',
+        code: 'print("done")',
+        stdin: '',
+      };
+      const res2 = await submitCodeExecution(payload2, 'token');
+      expect(res2.ok).toBe(true);
+      expect(axios.post).toHaveBeenLastCalledWith(
+        'http://localhost:5000/api/execute',
+        expect.objectContaining({ stdin: '' }),
+        expect.any(Object)
+      );
+    });
+
     it('should handle 401 Unauthorized when no JWT token is provided', async () => {
       axios.post.mockRejectedValueOnce({
         response: {

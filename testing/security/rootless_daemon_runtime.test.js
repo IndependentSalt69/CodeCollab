@@ -246,10 +246,7 @@ describe('Rootless Execution Daemon & Runtime Isolation Suite (M1.0 Phase B)', (
   describe('4. Runner Container Security Configuration & Socket Non-Mounting', () => {
     test('creates container with all M0.9 security bounds and ZERO socket mounts', async () => {
       const mockContainer = {
-        attach: jest.fn().mockResolvedValue({
-          on: jest.fn(),
-          pipe: jest.fn(),
-        }),
+        attach: jest.fn().mockImplementation(async () => require('node:stream').Readable.from([])),
         start: jest.fn().mockResolvedValue(),
         wait: jest.fn().mockResolvedValue({ StatusCode: 0 }),
         remove: jest.fn().mockResolvedValue(),
@@ -306,7 +303,7 @@ describe('Rootless Execution Daemon & Runtime Isolation Suite (M1.0 Phase B)', (
 
     test('passes Runtime: "runsc" in HostConfig when gVisor is configured and verified', async () => {
       const mockContainer = {
-        attach: jest.fn().mockResolvedValue({ on: jest.fn(), pipe: jest.fn() }),
+        attach: jest.fn().mockImplementation(async () => require('node:stream').Readable.from([])),
         start: jest.fn().mockResolvedValue(),
         wait: jest.fn().mockResolvedValue({ StatusCode: 0 }),
         remove: jest.fn().mockResolvedValue(),

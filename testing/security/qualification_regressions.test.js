@@ -76,7 +76,7 @@ describe('Qualification rejects incomplete or contradictory evidence', () => {
   });
 });
 
-describe.each(['cpp', 'java'])('%s sandbox policy and failure cleanup (mock daemon)', (language) => {
+describe.each(['python', 'cpp', 'java'])('%s sandbox policy and failure cleanup (mock daemon)', (language) => {
   beforeEach(() => resetDockerClient());
   afterEach(() => jest.restoreAllMocks());
   test('missing image fails without execution or host fallback', async () => {
@@ -95,7 +95,8 @@ describe.each(['cpp', 'java'])('%s sandbox policy and failure cleanup (mock daem
     expect(config.HostConfig).toMatchObject({ Memory: 268435456, MemorySwap: 268435456, NanoCPUs: 500000000,
       PidsLimit: 64, NetworkMode: 'none', ReadonlyRootfs: true, CapDrop: ['ALL'], SecurityOpt: ['no-new-privileges:true'] });
     expect(config.HostConfig.Tmpfs['/tmp']).toContain('noexec');
-    expect(config.HostConfig.Tmpfs['/work']).toContain(language === 'cpp' ? ',exec,' : ',noexec,');
+    if (language === 'python') expect(config.HostConfig.Tmpfs['/work']).toBeUndefined();
+    else expect(config.HostConfig.Tmpfs['/work']).toContain(language === 'cpp' ? ',exec,' : ',noexec,');
     expect(config.HostConfig.Binds).toBeUndefined();
     expect(container.remove).toHaveBeenCalledWith({ force: true });
   });
@@ -104,5 +105,10 @@ describe.each(['cpp', 'java'])('%s sandbox policy and failure cleanup (mock daem
     jest.spyOn(Docker.prototype, 'createContainer').mockResolvedValue(container);
     jest.spyOn(require('docker-modem').prototype, 'demuxStream').mockImplementation(() => {});
     await expect(runInSandbox({ language, code: 'source' })).rejects.toThrow(/cleanup failed/);
+  });
+  test('unavailable daemon fails without fallback', async () => {
+    const create = jest.spyOn(Docker.prototype, 'createContainer').mockRejectedValue(new Error('ECONNREFUSED execution daemon'));
+    await expect(runInSandbox({ language, code: 'source' })).rejects.toThrow(/ECONNREFUSED/);
+    expect(create).toHaveBeenCalledTimes(1);
   });
 });

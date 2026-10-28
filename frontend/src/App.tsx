@@ -8,13 +8,14 @@ import {
 } from '../../realtime/client/events';
 import CodeEditor from './components/editor/CodeEditor';
 import Terminal from './components/terminal/Terminal';
-import { submitCodeExecution } from './services/executionService';
+import { applyTerminalEvent, terminalRequest, TerminalEvent, TerminalRequestError } from './services/interactiveTerminal';
 import { ExecutionResult, ExecutionStatus } from './types/execution';
 import { Room } from './types/room';
 import { useAuth } from './context/AuthContext';
 import LoginPage from './pages/Login/LoginPage';
 import SignupPage from './pages/Signup/SignupPage';
 import DashboardPage from './pages/Dashboard/DashboardPage';
+import { API_BASE_URL, REALTIME_URL } from './services/apiConfig';
 
 type RoomMember = {
   socketId: string;
@@ -68,6 +69,7 @@ export default function App() {
   // Editor state
   const [code, setCode] = useState<string>(DEFAULT_PYTHON_CODE);
   const [language, setLanguage] = useState<string>('python');
+  const [stdin, setStdin] = useState<string>('');
 
   // Execution state
   const [isExecuting, setIsExecuting] = useState<boolean>(false);
@@ -138,73 +140,41 @@ export default function App() {
     }
   };
 
+  const terminalSequence = useRef(0);
+  const [terminalOwned, setTerminalOwned] = useState(false);
+  const terminalSession = useRef<string | null>(null);
+  const retiredSessions = useRef(new Set<string>());
   const handleRunCode = async () => {
-    if (!isDriver) {
-      alert('Only the active room Driver can execute code.');
-      return;
-    }
-
-    if (!roomId) {
-      alert('No active room selected.');
-      return;
-    }
-
-    if (isExecuting) {
-      return;
-    }
-
+    if (!isDriver || !roomId || isExecuting) return;
+    terminalSequence.current = 0;
+    const previousSession = terminalSession.current;
     setIsExecuting(true);
-    setExecutionResult({
-      status: 'queued',
-      stdout: '',
-      stderr: '',
-      language,
-      roomId,
-    });
-
-    addActivity(`⚡ Triggered ${language} code execution...`);
-
-    const response = await submitCodeExecution(
-      {
-        roomId,
-        language,
-        code,
-        socketId: myId,
-      },
-      authToken
-    );
-
-    if (!response.ok) {
+    setExecutionResult({ status: 'queued', stdout: '', stderr: '', roomId, language, segments: [] });
+    const response = await terminalRequest(socketRef.current, 'start', { roomId, language, code, stdin, timeout: 10000 });
+    if (!response?.ok) {
+      if (response?.uncertain && terminalSession.current !== previousSession) {
+        setExecutionResult(previous => previous ? { ...previous, inputClosed: true, error: response.error } : previous);
+        return;
+      }
       setIsExecuting(false);
-      setExecutionResult({
-        status: 'failed',
-        stdout: '',
-        stderr: '',
-        error: response.error || 'Code execution request failed',
-        language,
-        roomId,
-      });
-      addActivity(`❌ Code execution request rejected: ${response.error}`);
-    } else if (response.result) {
-      setIsExecuting(false);
-      setExecutionResult({
-        runId: response.runId,
-        roomId,
-        status: response.result.status,
-        stdout: response.result.stdout || '',
-        stderr: response.result.stderr || '',
-        exitCode: response.result.exitCode,
-        executionTimeMs: response.result.executionTimeMs,
-        language,
-      });
+      setExecutionResult({ status: 'failed', stdout: '', stderr: '', error: response?.error || 'Unable to start execution' });
     }
   };
-
-  const handleClearTerminal = () => {
-    setExecutionResult(null);
-    setIsExecuting(false);
+  const handleTerminalAction = async (action: 'input' | 'eof' | 'cancel', data?: string) => {
+    const id = terminalSession.current;
+    if (!id) throw Error('No active execution session');
+    const response = await terminalRequest(socketRef.current, action, { sessionId: id, seq: terminalSequence.current + 1, ...(data !== undefined ? { data } : {}) });
+    if (id !== terminalSession.current) return;
+    if (!response?.ok) {
+      if (response?.uncertain) setExecutionResult(previous => previous ? { ...previous, inputClosed: true } : previous);
+      throw new TerminalRequestError(response?.error || 'Terminal request failed', response?.uncertain === true);
+    }
+    terminalSequence.current = response.seq;
+    if (action !== 'input') setExecutionResult(previous => previous ? { ...previous, inputClosed: true } : previous);
   };
-
+  const handleClearTerminal = () => {
+    setExecutionResult(previous => previous ? { ...previous, stdout: '', stderr: '', segments: [], error: undefined } : null);
+  };
   const handleLeaveRoom = () => {
     if (socketRef.current && socketRef.current.connected && roomId) {
       socketRef.current.emit(SOCKET_EVENTS.ROOM.LEAVE, {
@@ -222,6 +192,11 @@ export default function App() {
     setActivityFeed([]);
     setDriverId(null);
     setExecutionResult(null);
+    terminalSession.current = null;
+    terminalSequence.current = 0;
+    retiredSessions.current.clear();
+    setTerminalOwned(false);
+    setIsExecuting(false);
     setRoomStatus('not joined');
     setSocketStatus('disconnected');
   };
@@ -247,13 +222,13 @@ export default function App() {
   useEffect(() => {
     if (!isAuthenticated || !activeRoom) return;
 
-    fetch('http://localhost:5000/health')
+    fetch(`${API_BASE_URL}/health`)
       .then((res) => res.json())
       .then((data) => setBackendStatus(data.status || 'connected'))
       .catch(() => setBackendStatus('offline'));
 
     // Authenticated socket connection with JWT
-    const socket = initClientSocket('http://localhost:5000', {
+    const socket = initClientSocket(REALTIME_URL, {
       auth: { token: authToken },
     });
     socketRef.current = socket;
@@ -297,6 +272,8 @@ export default function App() {
     const handleDisconnect = (reason: string) => {
       console.log('Socket disconnected:', reason);
       setSocketStatus('disconnected');
+      setIsExecuting(false);
+      setExecutionResult(previous => previous?.sessionId ? { ...previous, status: 'cancelled', inputClosed: true, error: 'Connection lost; execution cancelled' } : previous);
       setRoomStatus('not joined');
       setRoomMembers([]);
       setDriverId(null);
@@ -359,82 +336,23 @@ export default function App() {
     };
 
     // Execution Realtime Event Handlers
-    const handleExecutionStarted = (payload: {
-      runId: string;
-      roomId: string;
-      status: ExecutionStatus;
-      language: string;
-      triggeredBy: string;
-    }) => {
-      if (payload.roomId !== roomId) return;
-      setIsExecuting(true);
-      setExecutionResult((prev) => ({
-        runId: payload.runId,
-        roomId: payload.roomId,
-        status: payload.status || 'queued',
-        stdout: prev?.runId === payload.runId ? prev.stdout : '',
-        stderr: prev?.runId === payload.runId ? prev.stderr : '',
-        language: payload.language,
-        triggeredBy: payload.triggeredBy,
-      }));
+    const handleTerminalEvent = (event: TerminalEvent) => {
+      if (event.roomId !== roomId || retiredSessions.current.has(event.sessionId)) return;
+      if (event.type === 'status' && event.status === 'queued') {
+        if (terminalSession.current && terminalSession.current !== event.sessionId) {
+          retiredSessions.current.add(terminalSession.current);
+          if (retiredSessions.current.size > 32) retiredSessions.current.delete(retiredSessions.current.values().next().value!);
+        }
+        terminalSession.current = event.sessionId;
+        setTerminalOwned(event.canControl === true);
+        terminalSequence.current = 0;
+        setIsExecuting(true);
+      }
+      if (event.sessionId !== terminalSession.current) return;
+      setExecutionResult(previous => applyTerminalEvent(previous, event, roomId));
+      if (event.type === 'finished') { setIsExecuting(false); addActivity(`Execution ${event.status}`); }
     };
-
-    const handleExecutionCompleted = (payload: {
-      runId: string;
-      roomId: string;
-      status: ExecutionStatus;
-      stdout: string;
-      stderr: string;
-      exitCode: number;
-      executionTimeMs: number;
-      language: string;
-      triggeredBy: string;
-    }) => {
-      if (payload.roomId !== roomId) return;
-      setIsExecuting(false);
-      setExecutionResult({
-        runId: payload.runId,
-        roomId: payload.roomId,
-        status: 'completed',
-        stdout: payload.stdout || '',
-        stderr: payload.stderr || '',
-        exitCode: payload.exitCode ?? 0,
-        executionTimeMs: payload.executionTimeMs ?? 0,
-        language: payload.language,
-        triggeredBy: payload.triggeredBy,
-      });
-      addActivity(`⚡ Execution completed (${payload.executionTimeMs}ms)`);
-    };
-
-    const handleExecutionFailed = (payload: {
-      runId: string;
-      roomId: string;
-      status: ExecutionStatus;
-      stdout: string;
-      stderr: string;
-      exitCode: number;
-      executionTimeMs: number;
-      language: string;
-      triggeredBy: string;
-      error?: string;
-    }) => {
-      if (payload.roomId !== roomId) return;
-      setIsExecuting(false);
-      setExecutionResult({
-        runId: payload.runId,
-        roomId: payload.roomId,
-        status: payload.status || 'failed',
-        stdout: payload.stdout || '',
-        stderr: payload.stderr || '',
-        exitCode: payload.exitCode ?? 1,
-        executionTimeMs: payload.executionTimeMs ?? 0,
-        language: payload.language,
-        triggeredBy: payload.triggeredBy,
-        error: payload.error,
-      });
-      addActivity(`❌ Execution ${payload.status === 'timeout' ? 'timed out' : 'failed'}`);
-    };
-
+    socket.on('terminal:event', handleTerminalEvent);
     socket.on('connect', handleConnect);
     socket.on('disconnect', handleDisconnect);
     socket.on('connect_error', handleConnectError);
@@ -443,9 +361,6 @@ export default function App() {
     socket.on(SOCKET_EVENTS.ROOM.USER_LEFT, handleUserLeft);
     socket.on(SOCKET_EVENTS.EDITOR.DRIVER_UPDATED, handleDriverUpdated);
     socket.on(SOCKET_EVENTS.EDITOR.UPDATE, handleEditorUpdate);
-    socket.on(SOCKET_EVENTS.EXECUTION.STARTED, handleExecutionStarted);
-    socket.on(SOCKET_EVENTS.EXECUTION.COMPLETED, handleExecutionCompleted);
-    socket.on(SOCKET_EVENTS.EXECUTION.FAILED, handleExecutionFailed);
 
     if (!socket.connected) {
       socket.connect();
@@ -458,6 +373,7 @@ export default function App() {
         clearTimeout(debounceTimerRef.current);
       }
 
+      socket.off('terminal:event', handleTerminalEvent);
       socket.off('connect', handleConnect);
       socket.off('disconnect', handleDisconnect);
       socket.off('connect_error', handleConnectError);
@@ -466,9 +382,6 @@ export default function App() {
       socket.off(SOCKET_EVENTS.ROOM.USER_LEFT, handleUserLeft);
       socket.off(SOCKET_EVENTS.EDITOR.DRIVER_UPDATED, handleDriverUpdated);
       socket.off(SOCKET_EVENTS.EDITOR.UPDATE, handleEditorUpdate);
-      socket.off(SOCKET_EVENTS.EXECUTION.STARTED, handleExecutionStarted);
-      socket.off(SOCKET_EVENTS.EXECUTION.COMPLETED, handleExecutionCompleted);
-      socket.off(SOCKET_EVENTS.EXECUTION.FAILED, handleExecutionFailed);
 
       if (socket.connected) {
         socket.emit(SOCKET_EVENTS.ROOM.LEAVE, {
@@ -767,7 +680,6 @@ export default function App() {
                 }}
               >
                 <option value="python">Python 3.11 (⚡ Container Sandbox)</option>
-                <option value="javascript">JavaScript (Preview Only)</option>
                 <option value="java">Java 17 (Container Sandbox)</option>
                 <option value="cpp">C++17 (Container Sandbox)</option>
               </select>
@@ -807,23 +719,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* Preview-only language warning banner */}
-        {!isLanguageExecutable && (
-          <div
-            style={{
-              padding: '6px 12px',
-              backgroundColor: '#eff6ff',
-              border: '1px solid #bfdbfe',
-              borderRadius: '6px',
-              color: '#1e40af',
-              fontSize: '0.8rem',
-              marginBottom: '0.75rem',
-            }}
-          >
-            ℹ️ <strong>{language.toUpperCase()}</strong> is currently in editor preview mode. Container execution supports <strong>Python 3.11, C++17, and Java 17</strong>.
-          </div>
-        )}
-
         <CodeEditor
           value={code}
           language={language}
@@ -833,12 +728,53 @@ export default function App() {
         />
       </div>
 
+      {/* Standard Input (stdin) Section */}
+      <div style={{ marginBottom: '1.25rem', background: '#ffffff', padding: '1rem 1.25rem', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+          <label
+            htmlFor="stdin-input"
+            style={{ fontWeight: 600, fontSize: '0.95rem', color: '#1e293b' }}
+          >
+            Optional initial input
+          </label>
+          <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
+            Optional text sent once at startup; live responses go in the terminal below
+          </span>
+        </div>
+        <textarea
+          id="stdin-input"
+          value={stdin}
+          onChange={(e) => setStdin(e.target.value)}
+          placeholder="Optional initial input (multiline supported); leave empty for live input..."
+          rows={3}
+          style={{
+            width: '100%',
+            boxSizing: 'border-box',
+            fontFamily: 'Consolas, Monaco, "Courier New", monospace',
+            fontSize: '0.875rem',
+            lineHeight: '1.4',
+            padding: '8px 12px',
+            borderRadius: '6px',
+            border: '1px solid #cbd5e1',
+            background: '#f8fafc',
+            color: '#0f172a',
+            resize: 'vertical',
+            minHeight: '70px',
+            whiteSpace: 'pre',
+          }}
+        />
+      </div>
+
       {/* Terminal Output Section */}
       <div style={{ marginBottom: '1.25rem' }}>
         <Terminal
           result={executionResult}
           isRunning={isExecuting}
           onClear={handleClearTerminal}
+          canControl={isDriver && terminalOwned}
+          onInput={text => handleTerminalAction('input', text)}
+          onEOF={() => handleTerminalAction('eof')}
+          onStop={() => handleTerminalAction('cancel')}
           height="240px"
         />
       </div>

@@ -6,7 +6,7 @@ services:
       dockerfile: backend/Dockerfile
     restart: unless-stopped
     ports:
-      - "5000:5000"
+      - "127.0.0.1:5000:5000"
     environment:
       - PORT=5000
       - NODE_ENV=production
@@ -25,7 +25,7 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:5000/health || exit 1"]
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:5000/ready || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 3
@@ -37,7 +37,7 @@ services:
       dockerfile: frontend/Dockerfile
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "${FRONTEND_BIND_ADDRESS:-127.0.0.1}:3000:3000"
     networks:
       - app-network
     depends_on:
@@ -55,7 +55,7 @@ services:
     restart: unless-stopped
     # SEC-INFRA-01: Bind port strictly to 127.0.0.1 to avoid public host interface exposure
     ports:
-      - "127.0.0.1:27017:27017"
+      - "127.0.0.1:${MONGO_HOST_PORT:-27017}:27017"
     environment:
       - MONGO_INITDB_ROOT_USERNAME=${MONGO_ROOT_USER}
       - MONGO_INITDB_ROOT_PASSWORD=${MONGO_ROOT_PASSWORD}
@@ -101,6 +101,8 @@ services:
     profiles:
       - local-dev-execution
     image: docker:27-dind-rootless
+    # Reap orphaned containerd-shim helpers; rootlesskit alone as PID 1 leaves zombies.
+    init: true
     restart: unless-stopped
     networks:
       - execution-network
@@ -153,9 +155,9 @@ services:
       execution-daemon:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "node", "-e", "process.exit(0)"]
+      test: ["CMD", "node", "execution/worker/healthcheck.js"]
       interval: 15s
-      timeout: 5s
+      timeout: 8s
       retries: 3
       start_period: 5s
 

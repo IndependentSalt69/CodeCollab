@@ -8,8 +8,11 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 
 MAX_CODE_BYTES = 64 * 1024
+# A second, in-container deadline survives loss of the Node worker. It never raises policy limits.
+DEADLINE = time.monotonic() + min(10000, max(1, int(os.environ["CODECOLLAB_TIMEOUT_MS"]))) / 1000 if os.environ.get("CODECOLLAB_TIMEOUT_MS") else None
 JAVA_LIMITS = [
     "-Xms16m", "-Xmx96m", "-Xss256k", "-XX:+UseSerialGC",
     "-XX:ActiveProcessorCount=1", "-XX:MaxMetaspaceSize=64m",
@@ -18,12 +21,18 @@ JAVA_LIMITS = [
 ]
 
 
-def run_phase(argv, directory):
-    # No shell, user filenames, class names, compiler flags, or inherited stdin.
-    child = subprocess.Popen(argv, cwd=directory, stdin=subprocess.DEVNULL,
+def run_phase(argv, directory, inherit_stdin=False):
+    # No shell, user filenames, class names, or compiler flags.
+    # Compiler runs with DEVNULL; executed user program inherits container stdin.
+    stdin_target = None if inherit_stdin else subprocess.DEVNULL
+    child = subprocess.Popen(argv, cwd=directory, stdin=stdin_target,
                              start_new_session=True)
     try:
-        result = child.wait()
+        try:
+            result = child.wait(timeout=max(0.001, DEADLINE - time.monotonic()) if DEADLINE else None)
+        except subprocess.TimeoutExpired:
+            print("Execution deadline exceeded", file=sys.stderr, flush=True)
+            return 124
         return result if result >= 0 else 128 - result
     finally:
         # Reap/kill descendants even after a compiler or user program fails.
@@ -56,10 +65,10 @@ def main():
             compiler = ["javac", *["-J" + flag for flag in JAVA_LIMITS], "-encoding", "UTF-8",
                         "-proc:none", "-d", directory, "Main.java"]
             program = ["java", *JAVA_LIMITS, "-cp", directory, "Main"]
-        result = run_phase(compiler, directory)
+        result = run_phase(compiler, directory, inherit_stdin=False)
         if result != 0:
             return result
-        return run_phase(program, directory)
+        return run_phase(program, directory, inherit_stdin=True)
 
 
 if __name__ == "__main__":

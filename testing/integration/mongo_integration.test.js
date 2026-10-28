@@ -19,37 +19,7 @@ const authService = require('../../backend/src/services/authService');
 
 const RUN_MONGO_INTEGRATION = process.env.RUN_MONGO_INTEGRATION === 'true';
 
-function validateLocalTestUri(uri) {
-  if (!uri || typeof uri !== 'string') {
-    throw new Error('FATAL SAFETY GUARD: MONGO_TEST_URI is not defined.');
-  }
-
-  const forbiddenIndicators = [
-    'mongodb.net',
-    'atlas',
-    'azure',
-    'aws',
-    'cluster',
-    'remote',
-    'production',
-  ];
-
-  const lowerUri = uri.toLowerCase();
-  for (const indicator of forbiddenIndicators) {
-    if (lowerUri.includes(indicator)) {
-      throw new Error(
-        `FATAL SAFETY GUARD: Target URI contains prohibited remote indicator '${indicator}'. Real integration tests will NOT touch remote or production databases.`
-      );
-    }
-  }
-
-  const isLocalhost = lowerUri.includes('127.0.0.1') || lowerUri.includes('localhost');
-  if (!isLocalhost) {
-    throw new Error(
-      'FATAL SAFETY GUARD: Test target is not 127.0.0.1 or localhost. Execution aborted.'
-    );
-  }
-}
+const { validateLocalTestUri } = require('./localMongoTarget');
 
 const describeIntegration = RUN_MONGO_INTEGRATION ? describe : describe.skip;
 
@@ -59,21 +29,17 @@ describeIntegration('Live MongoDB Integration Verification (Disposable Local Ins
   let localMongoAvailable = false;
 
   beforeAll(async () => {
-    const rawUri = process.env.MONGO_TEST_URI || 'mongodb://127.0.0.1:27017';
-    validateLocalTestUri(rawUri);
+    const rawUri = process.env.MONGO_TEST_URI;
+    const parsedUrl = validateLocalTestUri(rawUri);
 
     disposableDbName = `codecollab_test_disposable_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
-    try {
-      const parsedUrl = new URL(rawUri);
-      parsedUrl.pathname = `/${disposableDbName}`;
-      testConnectionUri = parsedUrl.toString();
-    } catch (_) {
-      testConnectionUri = `${rawUri.replace(/\/$/, '')}/${disposableDbName}`;
-    }
+    parsedUrl.pathname = `/${disposableDbName}`;
+    testConnectionUri = parsedUrl.toString();
 
     try {
       await mongoose.connect(testConnectionUri, {
         serverSelectionTimeoutMS: 3000,
+        directConnection: true,
       });
       localMongoAvailable = true;
 
@@ -81,24 +47,21 @@ describeIntegration('Live MongoDB Integration Verification (Disposable Local Ins
       await User.init();
       await Room.init();
     } catch (err) {
-      console.warn(`[Integration Skipped] Could not connect to local MongoDB at ${rawUri}: ${err.message}`);
       localMongoAvailable = false;
+      throw new Error('Disposable MongoDB connection/index initialization failed. Check the explicit MONGO_TEST_URI and test container; no credentials are printed.');
     }
   }, 15000);
 
   afterAll(async () => {
-    if (localMongoAvailable && mongoose.connection.readyState === 1) {
-      try {
+    try {
+      if (localMongoAvailable && mongoose.connection.readyState === 1) {
+        if (mongoose.connection.db.databaseName !== disposableDbName) throw new Error('Refusing to drop a non-fixture database.');
         await mongoose.connection.db.dropDatabase();
-      } catch (err) {
-        console.warn(`Failed to drop disposable database ${disposableDbName}:`, err.message);
       }
-      await mongoose.disconnect();
-    }
+    } finally { await mongoose.disconnect(); }
   });
 
   it('enforces real unique indexes for username and email uniqueness (E11000)', async () => {
-    if (!localMongoAvailable) return;
 
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash('Password123!', salt);
@@ -146,7 +109,6 @@ describeIntegration('Live MongoDB Integration Verification (Disposable Local Ins
   });
 
   it('persists real room documents, handles membership mutations and idempotent joins', async () => {
-    if (!localMongoAvailable) return;
 
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash('Password123!', salt);
@@ -195,7 +157,6 @@ describeIntegration('Live MongoDB Integration Verification (Disposable Local Ins
   });
 
   it('persists 128-bit private room invite codes and enforces rotation in real MongoDB', async () => {
-    if (!localMongoAvailable) return;
 
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash('Password123!', salt);

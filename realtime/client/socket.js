@@ -2,7 +2,8 @@ import { io } from 'socket.io-client';
 
 let socketInstance = null;
 
-export const initClientSocket = (serverUrl = 'http://localhost:5000', options = {}) => {
+/** @param {string | undefined} serverUrl */
+export const initClientSocket = (serverUrl = undefined, options = {}) => {
   if (!socketInstance) {
     socketInstance = io(serverUrl, {
       autoConnect: false,

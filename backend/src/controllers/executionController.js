@@ -5,7 +5,7 @@ const { executeCodeService } = require('../services/executionService');
  */
 async function executeCodeController(req, res) {
   try {
-    const { roomId, language, code, timeout, memory, socketId: bodySocketId } = req.body || {};
+    const { roomId, language, code, stdin, timeout, memory, socketId: bodySocketId } = req.body || {};
     const socketId = req.headers['x-socket-id'] || bodySocketId;
     const io = req.app.get('io') || req.io;
 
@@ -13,6 +13,7 @@ async function executeCodeController(req, res) {
       roomId,
       language,
       code,
+      stdin,
       timeout,
       memory,
       user: req.user,

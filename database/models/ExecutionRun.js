@@ -21,6 +21,10 @@ const executionRunSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
+    stdin: {
+      type: String,
+      default: '',
+    },
     stdout: {
       type: String,
       default: '',
@@ -39,7 +43,7 @@ const executionRunSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['queued', 'running', 'completed', 'failed', 'timeout'],
+      enum: ['queued', 'running', 'completed', 'failed', 'timeout', 'cancelled'],
       default: 'queued',
     },
   },

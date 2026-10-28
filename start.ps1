@@ -1,156 +1,103 @@
 [CmdletBinding()]
-param()
-
+param([switch]$SkipBuild)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-
-$repoRoot = $PSScriptRoot
-$infraDir = Join-Path $repoRoot 'infrastructure'
-$envPath = Join-Path $infraDir '.env'
-$composePath = Join-Path $infraDir 'docker-compose.yml'
-$runnerLanguages = @('python', 'cpp', 'java')
-$runnerImages = @($runnerLanguages | ForEach-Object { "codecollab-runner-${_}:latest" })
-$daemonArchivePath = '/tmp/codecollab-runners-' + [guid]::NewGuid().ToString('N') + '.tar'
-
-if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
-    throw 'Docker CLI was not found. Install/start Docker Desktop, then retry.'
+Import-Module (Join-Path $PSScriptRoot 'scripts/DevTools.psm1') -Force
+$envPath = Join-Path $PSScriptRoot 'infrastructure/.env'
+$values = Read-LocalEnvironment $envPath
+Assert-LocalEnvironment $values
+foreach ($file in @('infrastructure/docker-compose.yml', 'backend/Dockerfile', 'frontend/Dockerfile', 'execution/runners/python/Dockerfile', 'execution/runners/cpp/Dockerfile', 'execution/runners/java/Dockerfile')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $PSScriptRoot $file))) { throw "Required file missing: $file" }
 }
-if (-not (Test-Path $envPath -PathType Leaf)) {
-    throw 'infrastructure/.env is missing. Run .\setup.ps1 first.'
-}
-if (-not (Test-Path $composePath -PathType Leaf)) {
-    throw 'Required Compose file is missing. Save this script in the CodeCollab repository root.'
-}
-foreach ($language in $runnerLanguages) {
-    if (-not (Test-Path (Join-Path $repoRoot "execution/runners/$language/Dockerfile") -PathType Leaf)) {
-        throw "Required $language runner Dockerfile is missing."
-    }
-}
-
-$envText = [System.IO.File]::ReadAllText($envPath)
-foreach ($key in @('JWT_SECRET', 'MONGO_ROOT_PASSWORD', 'MONGO_APP_PASSWORD', 'REDIS_PASSWORD')) {
-    if ($envText -notmatch "(?m)^$key=\s*(?!\s*$).+") {
-        throw "infrastructure/.env has an empty or missing $key. Run .\setup.ps1 and check the local configuration."
-    }
-    if ($envText -match "(?m)^$key=\s*replace_with_") {
-        throw "infrastructure/.env still has a placeholder for $key. Run .\setup.ps1 or replace the local secret before starting."
-    }
-}
-
-$composeVersion = & docker compose version 2>&1
-if ($LASTEXITCODE -ne 0) {
-    throw 'Docker Compose v2 is required. Update/install Docker Desktop, then retry.'
-}
-$dockerInfo = & docker info 2>&1
-if ($LASTEXITCODE -ne 0) {
-    throw 'Docker engine is not reachable. Start Docker Desktop and ensure it is using Linux containers, then retry.'
-}
-
-$composeBase = @('--env-file', $envPath, '-f', $composePath)
-$tempArchive = Join-Path ([System.IO.Path]::GetTempPath()) ("codecollab-runners-" + [guid]::NewGuid().ToString('N') + '.tar')
-$copiedToDaemon = $false
-
-Write-Host 'Starting CodeCollab local development stack...' -ForegroundColor Cyan
-Write-Warning 'LOCAL DEVELOPMENT ONLY: this profile permits unenforced inner cgroup controls. Do not expose this stack publicly or treat it as production-qualified.'
-$originalErrorActionPreference = $ErrorActionPreference
-# Docker emits advisory stderr notices; use the explicit exit-code checks below.
-$ErrorActionPreference = 'Continue'
-
+Assert-DockerReady
+$compose = Get-ComposeArguments $PSScriptRoot
+$saved = Enter-ComposeEnvironment $values
+$archive = Join-Path ([IO.Path]::GetTempPath()) "codecollab-$([guid]::NewGuid().ToString('N')).tar"
+$innerArchive = '/tmp/' + [IO.Path]::GetFileName($archive)
+$copyAttempted = $false
+function Invoke-Stack([string[]]$Arguments) { Invoke-DockerCommand ($compose + $Arguments) $values -TimeoutSeconds 900 }
 try {
-    # Explicitly target the app services and the nested daemon, but not the worker yet.
-    & docker compose @composeBase up -d --build mongo redis backend frontend execution-daemon
-    if ($LASTEXITCODE -ne 0) {
-        throw 'Compose failed while starting MongoDB, Redis, the app, or execution-daemon. Inspect: docker compose logs.'
-    }
-
-    Write-Host 'Waiting for the nested execution daemon...' -ForegroundColor Cyan
-    $daemonReady = $false
-    for ($attempt = 1; $attempt -le 30; $attempt++) {
-        $null = & docker compose @composeBase exec -T execution-daemon docker -H tcp://127.0.0.1:2375 info 2>&1
-        if ($LASTEXITCODE -eq 0) {
-            $daemonReady = $true
-            break
+    $null = Invoke-Stack @('config', '--quiet')
+    $runningPort = Get-RunningMongoPort $compose $values
+    $port = Select-MongoPort (ConvertTo-HostPort $env:MONGO_HOST_PORT) -RunningPort $runningPort
+    Save-MongoPort $envPath $port
+    $env:MONGO_HOST_PORT = [string]$port
+    Write-Host "MongoDB loopback port: $port (container/service port remains 27017)."
+    Write-Warning 'Trusted local development only. This nested daemon does not qualify production isolation.'
+    $images = @('python', 'cpp', 'java') | ForEach-Object { "codecollab-runner-${_}:latest" }
+    # Finish every build before touching the active stack; Docker reuses its build cache.
+    foreach ($language in @('python', 'cpp', 'java')) {
+        if (-not $SkipBuild) {
+            Write-Host "Building $language runner (cached layers reused)..."
+            $context = Join-Path $PSScriptRoot 'execution/runners'
+            if ($language -eq 'python') { $context = Join-Path $context 'python' }
+            try {
+                $null = Invoke-DockerCommand @('build', '-t', "codecollab-runner-${language}:latest", '-f', (Join-Path $PSScriptRoot "execution/runners/$language/Dockerfile"), $context) $values -TimeoutSeconds 900
+            } catch { throw "$language runner build failed before stack changes. Check network, HTTPS package repositories and image registry access. $($_.Exception.Message)" }
         }
-        Start-Sleep -Seconds 3
+        $null = Invoke-DockerCommand @('image', 'inspect', '--format', '{{.Id}}', "codecollab-runner-${language}:latest") $values
     }
-    if (-not $daemonReady) {
-        & docker compose @composeBase logs --tail 80 execution-daemon
-        throw 'Execution daemon did not become ready within 90 seconds. Worker was not started.'
+    if (-not $SkipBuild) {
+        Write-Host 'Building application and worker images before starting services...'
+        $null = Invoke-Stack @('build', 'backend', 'frontend', 'execution-worker')
     }
-
-    foreach ($language in $runnerLanguages) {
-        $runnerImage = "codecollab-runner-${language}:latest"
-        $runnerDockerfile = Join-Path $repoRoot "execution/runners/$language/Dockerfile"
-        $runnerContext = Join-Path $repoRoot 'execution/runners'
-        if ($language -eq 'python') { $runnerContext = Join-Path $runnerContext 'python' }
-        Write-Host "Building $language runner image..." -ForegroundColor Cyan
-        & docker build -t $runnerImage -f $runnerDockerfile $runnerContext
-        if ($LASTEXITCODE -ne 0) { throw "Failed to build the $language runner image." }
-    }
-
-    Write-Host 'Transferring all runner images into the isolated execution daemon...' -ForegroundColor Cyan
-    & docker image save --output $tempArchive @runnerImages
-    if ($LASTEXITCODE -ne 0) {
-        throw 'Failed to save the runner image archive.'
-    }
-
-    & docker compose @composeBase cp $tempArchive "execution-daemon:$daemonArchivePath"
-    if ($LASTEXITCODE -ne 0) {
-        throw 'Could not copy the runner images into execution-daemon.'
-    }
-    $copiedToDaemon = $true
-
-    & docker compose @composeBase exec -T execution-daemon docker -H tcp://127.0.0.1:2375 load -i $daemonArchivePath
-    if ($LASTEXITCODE -ne 0) {
-        throw 'Could not load the runner images into the isolated execution daemon.'
-    }
-
-    foreach ($runnerImage in $runnerImages) {
-        & docker compose @composeBase exec -T execution-daemon docker -H tcp://127.0.0.1:2375 image inspect --format '{{.Id}}' $runnerImage
-        if ($LASTEXITCODE -ne 0) { throw "$runnerImage verification failed inside the isolated execution daemon." }
-    }
-
-    # Start the worker only after its expected runner image is present.
-    Write-Host 'Starting the execution worker...' -ForegroundColor Cyan
-    & docker compose @composeBase up -d --build execution-worker
-    if ($LASTEXITCODE -ne 0) {
-        throw 'Failed to start execution-worker.'
-    }
-
-    Write-Host 'Waiting for backend health endpoint...' -ForegroundColor Cyan
-    $backendReady = $false
-    for ($attempt = 1; $attempt -le 30; $attempt++) {
-        try {
-            $response = Invoke-WebRequest -Uri 'http://localhost:5000/health' -TimeoutSec 3 -UseBasicParsing
-            if ([int]$response.StatusCode -ge 200 -and [int]$response.StatusCode -lt 400) {
-                $backendReady = $true
-                break
-            }
-        } catch {
-            # The backend may still be starting; retry briefly.
-        }
+    # Preserve existing services. Operator-managed recreation is a maintenance action.
+    if (-not $runningPort) { Repair-StoppedMongoMapping $compose $port $values }
+    $null = Invoke-Stack @('up', '-d', '--no-build', '--no-recreate', 'mongo', 'redis', 'execution-daemon')
+    $ready = $false
+    for ($attempt = 0; $attempt -lt 30; $attempt++) {
+        $probe = Invoke-DockerCommand ($compose + @('exec', '-T', 'execution-daemon', 'docker', '-H', 'tcp://127.0.0.1:2375', 'info', '--format', '{{.ServerVersion}}')) $values -AllowFailure
+        if ($probe.ExitCode -eq 0 -and $probe.Output -match '^\d+\.\d+\.\d+') { $ready = $true; break }
         Start-Sleep -Seconds 2
     }
-    if (-not $backendReady) {
-        & docker compose @composeBase logs --tail 80 backend execution-worker
-        throw 'Backend did not become healthy within 60 seconds. See logs above.'
+    if (-not $ready) { throw 'Execution daemon did not respond within 60 seconds. Run .\diagnose.ps1; do not raise PID limits or restart a shared daemon blindly.' }
+    $missing = @()
+    $innerDocker = $compose + @('exec', '-T', 'execution-daemon', 'docker', '-H', 'tcp://127.0.0.1:2375')
+    foreach ($image in $images) {
+        $hostId = Get-RunnerFingerprint $image -Secrets $values
+        try { $innerId = Get-RunnerFingerprint $image $innerDocker $values } catch { $innerId = '' }
+        if ($innerId -ne $hostId) { $missing += $image }
     }
-
-    Write-Host ''
-    Write-Host 'CodeCollab services are up.' -ForegroundColor Green
-    Write-Host 'Frontend: http://localhost:3000'
-    Write-Host 'Backend:  http://localhost:5000/health'
-    Write-Host "Runner images verified in execution-daemon: $($runnerImages -join ', ')" -ForegroundColor Green
-    Write-Host 'Try running print("Hello from CodeCollab!") from a room.'
-    Write-Host 'Reminder: this is a trusted local development profile, not production security qualification.' -ForegroundColor Yellow
-
-    & docker compose @composeBase ps
+    if ($missing.Count) {
+        Write-Host 'Transferring missing or changed runner images...'
+        $null = Invoke-DockerCommand (@('image', 'save', '--output', $archive) + $missing) $values
+        $copyAttempted = $true
+        $null = Invoke-Stack @('cp', $archive, "execution-daemon:$innerArchive")
+        $null = Invoke-Stack @('exec', '-T', 'execution-daemon', 'docker', '-H', 'tcp://127.0.0.1:2375', 'load', '-i', $innerArchive)
+    }
+    foreach ($image in $images) {
+        $expected = Get-RunnerFingerprint $image -Secrets $values
+        $actual = Get-RunnerFingerprint $image $innerDocker $values
+        if ($actual -ne $expected) { throw "Image verification failed for $image; worker was not started by this invocation." }
+    }
+    $null = Invoke-Stack @('up', '-d', '--no-build', '--no-recreate', 'backend', 'frontend', 'execution-worker')
+    Write-Host 'Waiting for health checks (up to 60 seconds)...'
+    for ($attempt = 0; $attempt -lt 30; $attempt++) {
+        $states = (Invoke-Stack @('ps', '--all', '--format', 'json')).Output
+        $rows = @($states -split '\r?\n' | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json })
+        if ($rows.Count -eq 6 -and @($rows | Where-Object { $_.State -ne 'running' -or $_.Health -ne 'healthy' }).Count -eq 0) { break }
+        Start-Sleep -Seconds 2
+    }
+    & (Join-Path $PSScriptRoot 'verify.ps1')
+    if ($LASTEXITCODE -ne 0) { throw 'Verification found failures. Run .\diagnose.ps1 for targeted recovery steps.' }
+    Write-Host 'Startup verification passed. Existing services were preserved; diagnose.ps1 reports configuration/image drift. Run verify.ps1 -ExecutionSmoke for disposable language runs.'
+} catch {
+    Write-Host "FAIL startup: $(Protect-DiagnosticText $_.Exception.Message $values)" -ForegroundColor Red
+    Write-Host 'Next: .\diagnose.ps1. Existing volumes and services were preserved; no rollback or cleanup of unrelated data was attempted.'
+    throw 'Startup incomplete; see the redacted diagnostic above.'
 } finally {
-    $ErrorActionPreference = $originalErrorActionPreference
-    if ($copiedToDaemon) {
-        $null = & docker compose @composeBase exec -u 0 -T execution-daemon sh -lc "rm -f $daemonArchivePath" 2>&1
-    }
-    if (Test-Path $tempArchive -PathType Leaf) {
-        Remove-Item -LiteralPath $tempArchive -Force -ErrorAction SilentlyContinue
+    try {
+        if ($copyAttempted) {
+            try {
+                $cleanup = Invoke-DockerCommand ($compose + @('exec', '-u', '0', '-T', 'execution-daemon', 'rm', '-f', $innerArchive)) $values -AllowFailure
+                if ($cleanup.ExitCode -ne 0) { throw 'Archive removal failed' }
+            } catch { Write-Warning "Temporary daemon archive cleanup failed. Remove only $innerArchive manually when the daemon is reachable." }
+        }
+        if (Test-Path -LiteralPath $archive) {
+            try { Remove-Item -LiteralPath $archive -Force }
+            catch { Write-Warning "Temporary host archive cleanup failed. Remove only $archive manually." }
+        }
+    } finally {
+        Exit-ComposeEnvironment $saved
     }
 }

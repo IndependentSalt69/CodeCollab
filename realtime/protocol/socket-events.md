@@ -2,6 +2,8 @@
 
 This document details the Socket.IO event contract between the CodeCollab client and server.
 
+The current browser execution UI uses `terminal:start`, `terminal:input`, `terminal:eof`, `terminal:cancel` and `terminal:event`. See the [interactive terminal contract](../../docs/INTERACTIVE_TERMINAL.md) for authorization, sequence numbers, bounded Redis transport, statuses and recovery. The `execution:*` events below remain the HTTP batch API contract.
+
 ## 1. Room Events
 - **`room:join`** (Client → Server)
   - Payload: `{ roomId: string, user?: { name?: string, id?: string, username?: string }, token?: string }`
