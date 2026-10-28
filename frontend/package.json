@@ -6,8 +6,8 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "start": "react-scripts start",
-    "test": "react-scripts test"
+    "start": "vite",
+    "test": "npm run test:frontend --prefix .."
   },
   "dependencies": {
     "@monaco-editor/react": "^4.6.0",

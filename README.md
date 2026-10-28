@@ -37,7 +37,15 @@ Open PowerShell in the repository root (`AWT_2026`) and run these commands in or
 - **`start.ps1`** builds the application and Python, C++, and Java runner images before changing the running stack. It transfers the runner images to the isolated execution daemon, verifies them, and starts the execution worker.
 - **`verify.ps1`** checks all six Compose services, the frontend and backend HTTP endpoints, and all three runner images inside the execution daemon. It is read-only and does not start, stop, or rebuild services.
 
-Open **http://localhost:3000** on the same laptop. The backend health endpoint is **http://localhost:5000/health**.
+### Access Endpoints & Local Development
+
+- **Docker Container Stack:**
+  - Frontend: **http://localhost:3000**
+  - Backend Health: **http://localhost:5000/health**
+- **Local Two-Terminal Development Workflow (Vite + Nodemon):**
+  - Frontend (Vite dev server): **http://localhost:5173**
+  - Backend API: **http://localhost:5001**
+  - See [Local Development Guide](docs/LOCAL_DEVELOPMENT.md) for startup details and architecture.
 
 If startup fails, read the first reported error before retrying. Check that Docker Desktop is running and configured for Linux containers. Initial builds require network access to image registries and package repositories.
 
@@ -46,8 +54,6 @@ If startup fails, read the first reported error before retrying. Check that Dock
 This Docker Desktop configuration is for trusted local development. It warns that inner cgroup enforcement is not production-qualified; passing local health checks does not prove production sandbox security.
 
 Do not expose this development stack to the public internet. On another device, `localhost` refers to that device, not the CodeCollab laptop. LAN access may require configuring the frontend API and realtime URLs, along with the backend's allowed client origin. Keep the execution daemon API (ports 2375/2376), MongoDB, and Redis private; do not expose them to the LAN.
-## Running Tests
-
 ## Tests
 
 Install workspace dependencies with `npm ci` from the root. Use a disposable Redis and explicit `REDIS_URL`; several suites clear their test queues. Never point tests at shared application Redis or a real database. The completion report records the isolated services used for this run.
