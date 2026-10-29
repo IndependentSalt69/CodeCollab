@@ -6,7 +6,7 @@ CodeCollab provides authenticated coding rooms, a shared driver-controlled edito
 
 ## Windows setup
 
-Install Docker Desktop with Linux containers, PowerShell 5.1 or newer, and Node.js/npm for host-side tests. From the repository root:
+From the repository root, run `.\setup.ps1` first. It checks everything the project needs and either sets it up or tells you exactly what to do:
 
 ```powershell
 .\setup.ps1
@@ -18,14 +18,22 @@ Install Docker Desktop with Linux containers, PowerShell 5.1 or newer, and Node.
 .\diagnose.ps1
 ```
 
-Setup creates `infrastructure/.env` only when absent, using random secrets. Existing configuration is validated and preserved. Missing, empty, duplicate, malformed or placeholder settings fail with key names rather than secret values. JWT secrets must contain at least 32 characters. Generated hex passwords work in the MongoDB/Redis connection URLs. Do not replace existing database credentials without rotating the corresponding database users.
+What `setup.ps1` does (safe to run again at any time):
+
+- **Tools:** checks Git, Node.js 20+ and Docker Desktop (Linux engine + Compose v2). If Docker Desktop is installed but not running, it starts it and waits. Missing tools are listed with the exact `winget` install command.
+- **Configuration:** creates `infrastructure/.env` with random secrets when it is absent. An existing file is preserved: settings newly added to `.env.example` are appended, empty duplicate lines are removed, and real conflicts are reported by key name and line number (values are never printed). JWT secrets must contain at least 32 characters. Do not replace existing database credentials without rotating the corresponding database users.
+- **Ports:** checks that ports 3000, 5000, 6379 and 7880-7881 are not reserved by Windows or used by another program, and prints the fix (for reserved ports: `net stop winnat` then `net start winnat` in an Administrator PowerShell).
+- **Voice chat:** fills in LiveKit's local dev-mode settings when they are empty and starts a local LiveKit server container (`codecollab-livekit`). Use `-SkipVoice` to skip this, or set your own `LIVEKIT_*` values to use another LiveKit server.
+- **Dependencies:** runs `npm ci` when `node_modules` is missing or older than `package-lock.json` (`-SkipInstall` to skip).
+
+If anything needs your attention, setup ends with a numbered list of exact steps and exits with code 1; fix them and run it again.
 
 ### Prerequisites
 - Windows PowerShell
 - Docker Desktop configured for Linux containers
 - Internet access for initial image pulls and builds
 - Git, if you need to clone or update the repository
-- Node.js 18+ only for host-based development commands and tests
+- Node.js 20+ for host-based development commands and tests
 
 MongoDB and Redis are started by Docker Compose; they do not need to be installed separately for this workflow.
 
@@ -33,7 +41,7 @@ MongoDB and Redis are started by Docker Compose; they do not need to be installe
 
 Open PowerShell in the repository root (`AWT_2026`) and run these commands in order: `.\setup.ps1`, `.\start.ps1`, then `.\verify.ps1`.
 
-- **`setup.ps1`** creates `infrastructure\.env` with unique local secrets if the file is missing. It preserves an existing file. Keep the file private and never commit it.
+- **`setup.ps1`** checks tools, ports and configuration, creates or updates `infrastructure\.env` (existing secrets are never overwritten), starts the local voice server and installs dependencies. Keep `.env` private and never commit it.
 - **`start.ps1`** builds the application and Python, C++, and Java runner images before changing the running stack. It transfers the runner images to the isolated execution daemon, verifies them, and starts the execution worker.
 - **`verify.ps1`** checks all six Compose services, the frontend and backend HTTP endpoints, and all three runner images inside the execution daemon. It is read-only and does not start, stop, or rebuild services.
 
