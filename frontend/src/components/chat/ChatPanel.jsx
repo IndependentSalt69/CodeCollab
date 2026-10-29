@@ -1,20 +1,11 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { SOCKET_EVENTS } from '../../../../realtime/client/events';
 import { getRoomMessages } from '../../services/roomService';
-import { ChatMessage, ChatSendAck } from '../../types/chat';
 
 const MAX_MESSAGE_LENGTH = 2000;
 
-interface ChatPanelProps {
-  socket: any | null;
-  roomId: string;
-  token: string | null;
-  currentUserId?: string;
-  isJoined: boolean;
-}
-
 // Live broadcasts carry a few extra fields; keep only what the panel renders.
-function toChatMessage(payload: any): ChatMessage {
+function toChatMessage(payload) {
   return {
     id: String(payload.id),
     roomId: payload.roomId,
@@ -27,20 +18,24 @@ function toChatMessage(payload: any): ChatMessage {
   };
 }
 
-function mergeMessages(existing: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] {
+function mergeMessages(existing, incoming) {
   const byId = new Map(existing.map((m) => [m.id, m]));
   incoming.forEach((m) => byId.set(m.id, m));
   return Array.from(byId.values()).sort((a, b) => (a.id < b.id ? -1 : 1));
 }
 
-export const ChatPanel: React.FC<ChatPanelProps> = ({ socket, roomId, token, currentUserId, isJoined }) => {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
+/**
+ * Room chat: loads saved history once the socket has joined the room and shows live messages.
+ * Props: socket (connected socket or null), roomId, token, currentUserId, isJoined.
+ */
+export const ChatPanel = ({ socket, roomId, token, currentUserId, isJoined }) => {
+  const [messages, setMessages] = useState([]);
+  const [nextCursor, setNextCursor] = useState(null);
   const [draft, setDraft] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isSending, setIsSending] = useState(false);
-  const listRef = useRef<HTMLDivElement | null>(null);
+  const listRef = useRef(null);
   const stickToBottomRef = useRef(true);
 
   // Load the latest page of history once the socket has joined the room (and again after reconnects)
@@ -54,7 +49,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ socket, roomId, token, cur
       setIsLoading(false);
       if (res.ok && res.messages) {
         stickToBottomRef.current = true;
-        setMessages((prev) => mergeMessages(prev, res.messages!));
+        setMessages((prev) => mergeMessages(prev, res.messages));
         setNextCursor(res.nextCursor ?? null);
         setError(null);
       } else {
@@ -79,7 +74,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ socket, roomId, token, cur
   useEffect(() => {
     if (!socket) return;
 
-    const handleReceived = (payload: any) => {
+    const handleReceived = (payload) => {
       if (!payload?.id || payload.roomId !== roomId) return;
       const list = listRef.current;
       stickToBottomRef.current = !list || list.scrollHeight - list.scrollTop - list.clientHeight < 40;
@@ -106,21 +101,21 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ socket, roomId, token, cur
     setIsLoading(false);
     if (res.ok && res.messages) {
       stickToBottomRef.current = false;
-      setMessages((prev) => mergeMessages(prev, res.messages!));
+      setMessages((prev) => mergeMessages(prev, res.messages));
       setNextCursor(res.nextCursor ?? null);
     } else {
       setError(res.error || 'Failed to load older messages');
     }
   };
 
-  const sendMessage = (e: React.FormEvent) => {
+  const sendMessage = (e) => {
     e.preventDefault();
     const text = draft.trim();
     if (!text || !socket || !isJoined || isSending) return;
 
     setIsSending(true);
     stickToBottomRef.current = true;
-    socket.emit(SOCKET_EVENTS.CHAT.SEND, { roomId, message: text }, (ack: ChatSendAck) => {
+    socket.emit(SOCKET_EVENTS.CHAT.SEND, { roomId, message: text }, (ack) => {
       setIsSending(false);
       if (ack?.ok) {
         setDraft('');

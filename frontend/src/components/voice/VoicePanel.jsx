@@ -1,24 +1,8 @@
-import React, { useEffect, useRef, useState } from 'react';
-import type { Room, Participant, RemoteTrack } from 'livekit-client';
+import { useEffect, useRef, useState } from 'react';
 import { getVoiceToken } from '../../services/roomService';
 
-type VoiceStatus = 'idle' | 'connecting' | 'connected';
-
-interface VoicePanelProps {
-  roomId: string;
-  token: string | null;
-}
-
-interface VoiceMember {
-  identity: string;
-  name: string;
-  isLocal: boolean;
-  isSpeaking: boolean;
-  isMuted: boolean;
-}
-
-function listMembers(room: Room): VoiceMember[] {
-  const toMember = (p: Participant, isLocal: boolean): VoiceMember => ({
+function listMembers(room) {
+  const toMember = (p, isLocal) => ({
     identity: p.identity,
     name: p.name || p.identity,
     isLocal,
@@ -31,12 +15,16 @@ function listMembers(room: Room): VoiceMember[] {
   ];
 }
 
-export const VoicePanel: React.FC<VoicePanelProps> = ({ roomId, token }) => {
-  const [status, setStatus] = useState<VoiceStatus>('idle');
-  const [members, setMembers] = useState<VoiceMember[]>([]);
+/**
+ * Room voice channel using LiveKit. Status is 'idle', 'connecting' or 'connected'.
+ * Props: roomId, token (CodeCollab login token used to request a voice token).
+ */
+export const VoicePanel = ({ roomId, token }) => {
+  const [status, setStatus] = useState('idle');
+  const [members, setMembers] = useState([]);
   const [isMuted, setIsMuted] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const roomRef = useRef<Room | null>(null);
+  const [error, setError] = useState(null);
+  const roomRef = useRef(null);
 
   // Leave the call when switching rooms or leaving the page
   useEffect(() => {
@@ -65,14 +53,14 @@ export const VoicePanel: React.FC<VoicePanelProps> = ({ roomId, token }) => {
     const refresh = () => setMembers(listMembers(room));
 
     room
-      .on(RoomEvent.TrackSubscribed, (track: RemoteTrack) => {
+      .on(RoomEvent.TrackSubscribed, (track) => {
         if (track.kind === Track.Kind.Audio) {
           const el = track.attach();
           el.style.display = 'none';
           document.body.appendChild(el);
         }
       })
-      .on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack) => {
+      .on(RoomEvent.TrackUnsubscribed, (track) => {
         track.detach().forEach((el) => el.remove());
       })
       .on(RoomEvent.ParticipantConnected, refresh)
@@ -128,7 +116,7 @@ export const VoicePanel: React.FC<VoicePanelProps> = ({ roomId, token }) => {
     roomRef.current?.disconnect();
   };
 
-  const buttonStyle = (background: string): React.CSSProperties => ({
+  const buttonStyle = (background) => ({
     padding: '6px 14px',
     fontSize: '0.875rem',
     fontWeight: 600,

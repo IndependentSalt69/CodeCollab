@@ -6,10 +6,25 @@ import {
   Room,
   InviteResponse,
 } from '../types/room';
-import { ChatHistoryResponse } from '../types/chat';
-import { VoiceTokenResponse } from '../types/voice';
 
 import { API_BASE_URL } from './apiConfig';
+
+type ChatHistoryResponse = {
+  ok: boolean;
+  messages?: Array<{ id: string; roomId: string; content: string; sender: { id: string; username: string }; timestamp: string }>;
+  nextCursor?: string | null;
+  error?: string;
+};
+
+type VoiceTokenResponse = {
+  ok: boolean;
+  token?: string;
+  url?: string;
+  roomName?: string;
+  identity?: string;
+  expiresIn?: number;
+  error?: string;
+};
 
 function getAuthHeaders(token?: string | null) {
   const authToken = token || (typeof window !== 'undefined' ? localStorage.getItem('token') : null);
