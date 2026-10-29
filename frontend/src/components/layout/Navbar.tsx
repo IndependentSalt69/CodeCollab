@@ -29,7 +29,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onNavigate, activeRoute = '/' })
         position: 'sticky',
         top: 0,
         zIndex: 50,
-        backgroundColor: 'rgba(17, 19, 27, 0.85)',
+        backgroundColor: 'rgba(255, 255, 255, 0.85)',
         backdropFilter: 'blur(12px)',
         borderBottom: '1px solid var(--border-subtle)',
         padding: '0 24px',

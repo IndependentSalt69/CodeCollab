@@ -24,32 +24,32 @@ export const Badge: React.FC<BadgeProps> = ({
       case 'violet':
         return {
           backgroundColor: 'var(--primary-violet-subtle)',
-          color: '#c4b5fd',
-          border: '1px solid rgba(139, 92, 246, 0.3)',
+          color: 'var(--primary-violet)',
+          border: '1px solid rgba(124, 58, 237, 0.25)',
         };
       case 'cyan':
         return {
           backgroundColor: 'var(--accent-cyan-subtle)',
           color: 'var(--accent-cyan)',
-          border: '1px solid rgba(34, 211, 238, 0.3)',
+          border: '1px solid rgba(2, 132, 199, 0.25)',
         };
       case 'green':
         return {
           backgroundColor: 'var(--success-green-subtle)',
           color: 'var(--success-green)',
-          border: '1px solid rgba(52, 211, 153, 0.3)',
+          border: '1px solid rgba(22, 163, 74, 0.25)',
         };
       case 'amber':
         return {
           backgroundColor: 'var(--warning-amber-subtle)',
           color: 'var(--warning-amber)',
-          border: '1px solid rgba(251, 191, 36, 0.3)',
+          border: '1px solid rgba(217, 119, 6, 0.25)',
         };
       case 'red':
         return {
           backgroundColor: 'var(--danger-red-subtle)',
           color: 'var(--danger-red)',
-          border: '1px solid rgba(239, 68, 68, 0.3)',
+          border: '1px solid rgba(220, 38, 38, 0.25)',
         };
       case 'neutral':
       default:

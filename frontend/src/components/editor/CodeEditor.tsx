@@ -17,7 +17,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
   readOnly,
   onChange,
   height = '420px',
-  theme = 'vs-dark',
+  theme = 'vs',
   className,
 }) => {
   const handleChange: OnChange = (val) => {

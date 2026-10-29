@@ -119,14 +119,11 @@ export const Footer: React.FC = () => {
             <li>
               <strong style={{ color: 'var(--text-main)' }}>Python 3.11:</strong> Active Container Sandbox
             </li>
-            <li style={{ color: 'var(--text-dim)' }}>
-              <strong>Java 17:</strong> Compilation Pipeline (Coming Soon)
+            <li>
+              <strong style={{ color: 'var(--text-main)' }}>Java 17:</strong> Sandboxed JVM Runner
             </li>
-            <li style={{ color: 'var(--text-dim)' }}>
-              <strong>C++ (GCC 12):</strong> Sandboxed Runner (Coming Soon)
-            </li>
-            <li style={{ color: 'var(--text-dim)' }}>
-              <strong>JavaScript (Node.js):</strong> Editor Preview
+            <li>
+              <strong style={{ color: 'var(--text-main)' }}>C++ (GCC 12):</strong> Sandboxed Runner
             </li>
           </ul>
         </div>

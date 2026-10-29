@@ -228,22 +228,22 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                     fontFamily: 'var(--font-mono)',
                     fontSize: '0.85rem',
                     lineHeight: '1.7',
-                    color: '#e2e8f0',
-                    backgroundColor: '#12141d',
+                    color: 'var(--text-main)',
+                    backgroundColor: 'var(--bg-surface)',
                     overflow: 'hidden',
                   }}
                 >
-                  <div><span style={{ color: '#64748b' }}>01 </span><span style={{ color: '#818cf8' }}>def</span> <span style={{ color: '#38bdf8' }}>binary_search</span>(arr, target):</div>
-                  <div><span style={{ color: '#64748b' }}>02 </span>    left, right = <span style={{ color: '#f59e0b' }}>0</span>, <span style={{ color: '#818cf8' }}>len</span>(arr) - <span style={{ color: '#f59e0b' }}>1</span></div>
-                  <div><span style={{ color: '#64748b' }}>03 </span>    <span style={{ color: '#818cf8' }}>while</span> left &lt;= right:</div>
-                  <div><span style={{ color: '#64748b' }}>04 </span>        mid = (left + right) // <span style={{ color: '#f59e0b' }}>2</span></div>
-                  <div><span style={{ color: '#64748b' }}>05 </span>        <span style={{ color: '#818cf8' }}>if</span> arr[mid] == target:</div>
-                  <div><span style={{ color: '#64748b' }}>06 </span>            <span style={{ color: '#818cf8' }}>return</span> mid</div>
-                  <div><span style={{ color: '#64748b' }}>07 </span>        <span style={{ color: '#818cf8' }}>elif</span> arr[mid] &lt; target: left = mid + <span style={{ color: '#f59e0b' }}>1</span></div>
-                  <div><span style={{ color: '#64748b' }}>08 </span>        <span style={{ color: '#818cf8' }}>else</span>: right = mid - <span style={{ color: '#f59e0b' }}>1</span></div>
-                  <div><span style={{ color: '#64748b' }}>09 </span>    <span style={{ color: '#818cf8' }}>return</span> -<span style={{ color: '#f59e0b' }}>1</span></div>
-                  <div><span style={{ color: '#64748b' }}>10 </span></div>
-                  <div><span style={{ color: '#64748b' }}>11 </span>print(<span style={{ color: '#34d399' }}>&quot;Target Index:&quot;</span>, binary_search([<span style={{ color: '#f59e0b' }}>1, 3, 5, 7, 9</span>], <span style={{ color: '#f59e0b' }}>7</span>))</div>
+                  <div><span style={{ color: '#94a3b8' }}>01 </span><span style={{ color: '#7c3aed', fontWeight: 600 }}>def</span> <span style={{ color: '#0284c7', fontWeight: 600 }}>binary_search</span>(arr, target):</div>
+                  <div><span style={{ color: '#94a3b8' }}>02 </span>    left, right = <span style={{ color: '#d97706' }}>0</span>, <span style={{ color: '#7c3aed' }}>len</span>(arr) - <span style={{ color: '#d97706' }}>1</span></div>
+                  <div><span style={{ color: '#94a3b8' }}>03 </span>    <span style={{ color: '#7c3aed', fontWeight: 600 }}>while</span> left &lt;= right:</div>
+                  <div><span style={{ color: '#94a3b8' }}>04 </span>        mid = (left + right) // <span style={{ color: '#d97706' }}>2</span></div>
+                  <div><span style={{ color: '#94a3b8' }}>05 </span>        <span style={{ color: '#7c3aed', fontWeight: 600 }}>if</span> arr[mid] == target:</div>
+                  <div><span style={{ color: '#94a3b8' }}>06 </span>            <span style={{ color: '#7c3aed', fontWeight: 600 }}>return</span> mid</div>
+                  <div><span style={{ color: '#94a3b8' }}>07 </span>        <span style={{ color: '#7c3aed', fontWeight: 600 }}>elif</span> arr[mid] &lt; target: left = mid + <span style={{ color: '#d97706' }}>1</span></div>
+                  <div><span style={{ color: '#94a3b8' }}>08 </span>        <span style={{ color: '#7c3aed', fontWeight: 600 }}>else</span>: right = mid - <span style={{ color: '#d97706' }}>1</span></div>
+                  <div><span style={{ color: '#94a3b8' }}>09 </span>    <span style={{ color: '#7c3aed', fontWeight: 600 }}>return</span> -<span style={{ color: '#d97706' }}>1</span></div>
+                  <div><span style={{ color: '#94a3b8' }}>10 </span></div>
+                  <div><span style={{ color: '#94a3b8' }}>11 </span>print(<span style={{ color: '#16a34a' }}>&quot;Target Index:&quot;</span>, binary_search([<span style={{ color: '#d97706' }}>1, 3, 5, 7, 9</span>], <span style={{ color: '#d97706' }}>7</span>))</div>
                 </div>
 
                 {/* Terminal Preview */}
@@ -721,18 +721,17 @@ export const LandingPage: React.FC<LandingPageProps> = ({
       >
         <div
           style={{
-            backgroundColor: 'var(--bg-surface)',
-            border: '1px solid var(--border-medium)',
+            backgroundColor: '#FFFFFF',
+            border: '1px solid #E2E8F0',
             borderRadius: 'var(--radius-xl)',
             padding: '48px 32px',
-            background: 'linear-gradient(135deg, rgba(27, 30, 43, 0.9) 0%, rgba(35, 38, 56, 0.7) 100%)',
-            boxShadow: 'var(--shadow-xl)',
+            boxShadow: 'var(--shadow-md, 0 4px 6px -1px rgba(0, 0, 0, 0.07))',
           }}
         >
-          <h2 style={{ fontFamily: 'var(--font-heading)', fontSize: '2rem', fontWeight: 700, margin: '0 0 12px' }}>
+          <h2 style={{ fontFamily: 'var(--font-heading)', fontSize: '2rem', fontWeight: 700, margin: '0 0 12px', color: '#0F172A' }}>
             Ready to Build and Collaborate?
           </h2>
-          <p style={{ color: 'var(--text-muted)', maxWidth: '520px', margin: '0 auto 28px', fontSize: '1rem' }}>
+          <p style={{ color: '#475569', maxWidth: '520px', margin: '0 auto 28px', fontSize: '1rem' }}>
             Join thousands of developers using CodeCollab for real-time pair programming and sandboxed execution.
           </p>
           <div style={{ display: 'flex', justifyContent: 'center', gap: '16px', flexWrap: 'wrap' }}>

@@ -88,6 +88,25 @@ describe.each(['cpp', 'java'])('%s compiled runner (live sandbox)', (language) =
     }
   });
   if (language === 'java') {
+    test('supports arbitrarily named public class (e.g. CheckNumber) and preserves Main', async () => {
+      const checkNumberCode = 'public class CheckNumber {\n' +
+        '  public static void main(String[] args) {\n' +
+        '    System.out.println("CheckNumber executed successfully");\n' +
+        '  }\n' +
+        '}';
+      const resultCustom = await run(checkNumberCode);
+      expect(resultCustom).toMatchObject({ status: 'completed', exitCode: 0, stderr: '' });
+      expect(resultCustom.stdout.trim()).toBe('CheckNumber executed successfully');
+
+      const mainCode = 'public class Main {\n' +
+        '  public static void main(String[] args) {\n' +
+        '    System.out.println("Main executed successfully");\n' +
+        '  }\n' +
+        '}';
+      const resultMain = await run(mainCode);
+      expect(resultMain).toMatchObject({ status: 'completed', exitCode: 0, stderr: '' });
+      expect(resultMain.stdout.trim()).toBe('Main executed successfully');
+    });
     test.each(['public class Other { }', 'public class Main { }', 'package escape; public class Main { public static void main(String[] a) {} }'])('rejects invalid entry point (%#)', async (code) => {
       expect((await run(code)).status).toBe('failed');
     });

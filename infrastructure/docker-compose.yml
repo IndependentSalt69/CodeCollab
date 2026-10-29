@@ -108,6 +108,7 @@ services:
       - execution-network
     environment:
       - DOCKER_TLS_CERTDIR=
+      - TINI_SUBREAPER=true
     devices:
       - /dev/net/tun:/dev/net/tun
     security_opt:
@@ -116,7 +117,7 @@ services:
     # Prevents untrusted jobs in nested DinD from exhausting workstation RAM or CPU
     cpus: 1.0
     mem_limit: 512m
-    pids_limit: 128
+    pids_limit: 256
     volumes:
       - execution-daemon-data:/var/lib/docker
     healthcheck:

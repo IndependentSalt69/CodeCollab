@@ -4,6 +4,7 @@ The engine bounds the entire container lifetime (compilation + execution), outpu
 CPU, memory, and PIDs. All writable artifacts live in the disposable /work tmpfs.
 """
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -15,10 +16,40 @@ MAX_CODE_BYTES = 64 * 1024
 DEADLINE = time.monotonic() + min(10000, max(1, int(os.environ["CODECOLLAB_TIMEOUT_MS"]))) / 1000 if os.environ.get("CODECOLLAB_TIMEOUT_MS") else None
 JAVA_LIMITS = [
     "-Xms16m", "-Xmx96m", "-Xss256k", "-XX:+UseSerialGC",
-    "-XX:ActiveProcessorCount=1", "-XX:MaxMetaspaceSize=64m",
-    "-XX:ReservedCodeCacheSize=32m", "-XX:-UsePerfData",
-    "-XX:+ExitOnOutOfMemoryError",
+    "-XX:ActiveProcessorCount=2", "-XX:CICompilerCount=2",
+    "-XX:MaxMetaspaceSize=64m", "-XX:ReservedCodeCacheSize=32m",
+    "-XX:-UsePerfData", "-XX:+ExitOnOutOfMemoryError",
 ]
+
+
+def find_java_main_class(code: str) -> str:
+    """Identifies the public class name or primary launch class for a Java submission."""
+    # Strip block comments /* ... */
+    cleaned = re.sub(r'/\*.*?\*/', '', code, flags=re.DOTALL)
+    # Strip line comments // ...
+    cleaned = re.sub(r'//.*', '', cleaned)
+    # Strip string literals "..."
+    cleaned = re.sub(r'"(?:\\.|[^"\\])*"', '""', cleaned)
+    # Strip char literals '.'
+    cleaned = re.sub(r"'(?:\\.|[^'\\])*'", "''", cleaned)
+
+    # 1. Look for a public top-level class, record, enum, or interface
+    pub_match = re.search(
+        r'\bpublic\s+(?:(?:final|abstract|sealed|non-sealed|static)\s+)*(?:class|record|enum|interface)\s+([A-Za-z_$][A-Za-z0-9_$]*)',
+        cleaned
+    )
+    if pub_match:
+        return pub_match.group(1)
+
+    # 2. Look for any top-level class/record/enum
+    class_match = re.search(
+        r'\b(?:class|record|enum)\s+([A-Za-z_$][A-Za-z0-9_$]*)',
+        cleaned
+    )
+    if class_match:
+        return class_match.group(1)
+
+    return "Main"
 
 
 def run_phase(argv, directory, inherit_stdin=False):
@@ -55,16 +86,21 @@ def main():
         print("Runner refuses to execute as root", file=sys.stderr)
         return 2
     with tempfile.TemporaryDirectory(prefix="submission-", dir="/work") as directory:
-        filename = "main.cpp" if language == "cpp" else "Main.java"
-        with open(os.path.join(directory, filename), "w", encoding="utf-8") as source:
-            source.write(code)
         if language == "cpp":
+            filename = "main.cpp"
+            with open(os.path.join(directory, filename), "w", encoding="utf-8") as source:
+                source.write(code)
             compiler = ["g++", "-std=c++17", "-O0", "-pipe", "-fmax-errors=20", "main.cpp", "-o", "program"]
             program = [os.path.join(directory, "program")]
         else:
+            class_name = find_java_main_class(code)
+            filename = f"{class_name}.java"
+            with open(os.path.join(directory, filename), "w", encoding="utf-8") as source:
+                source.write(code)
             compiler = ["javac", *["-J" + flag for flag in JAVA_LIMITS], "-encoding", "UTF-8",
-                        "-proc:none", "-d", directory, "Main.java"]
-            program = ["java", *JAVA_LIMITS, "-cp", directory, "Main"]
+                        "-proc:none", "-d", directory, filename]
+            program = ["java", *JAVA_LIMITS, "-cp", directory, class_name]
+
         result = run_phase(compiler, directory, inherit_stdin=False)
         if result != 0:
             return result

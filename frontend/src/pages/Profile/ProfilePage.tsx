@@ -145,7 +145,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ onBackToDashboard }) =
           >
             <div>
               <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>Monaco Editor Theme</div>
-              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Dark theme (vs-dark) aligned with CodeCollab tokens</div>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Light theme (vs) aligned with CodeCollab tokens</div>
             </div>
             <Badge variant="cyan">Active</Badge>
           </div>
@@ -183,7 +183,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ onBackToDashboard }) =
               <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>Execution History Persistence</div>
               <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Historical runs archive and per-user execution telemetry</div>
             </div>
-            <Badge variant="amber" icon={<Clock size={11} />}>Planned Feature</Badge>
+            <Badge variant="green" icon={<Check size={11} />}>Implemented</Badge>
           </div>
 
           <div
@@ -201,7 +201,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ onBackToDashboard }) =
               <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>Voice Collaboration (WebRTC)</div>
               <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Integrated peer-to-peer audio channels</div>
             </div>
-            <Badge variant="amber" icon={<Clock size={11} />}>Planned Feature</Badge>
+            <Badge variant="green" icon={<Check size={11} />}>Implemented</Badge>
           </div>
         </div>
       </div>
